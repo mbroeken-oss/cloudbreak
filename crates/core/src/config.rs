@@ -32,6 +32,9 @@ pub trait TryLoadConfig: Sized + DeserializeOwned {
 pub struct GrpcConfig {
     /// The endpoint of the Yellowstone server.
     pub endpoint: String,
+    /// Optional JSON-RPC endpoint used by self-healing gap confirmation.
+    #[serde(rename = "rpc-endpoint")]
+    pub rpc_endpoint: Option<String>,
     /// The token to use for authentication.
     #[serde(rename = "x-token")]
     pub x_token: Option<String>,
@@ -63,6 +66,10 @@ pub struct GrpcConfig {
 
 impl GrpcConfig {
     pub fn rpc_url(&self) -> String {
+        if let Some(endpoint) = &self.rpc_endpoint {
+            return endpoint.clone();
+        }
+
         format!(
             "{}/{}:8899",
             self.endpoint,
