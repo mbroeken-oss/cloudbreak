@@ -197,11 +197,12 @@ async fn run_orchestrator(state: HashCheckerState) -> Result<()> {
     ));
 
     let mut snapshot_files =
-        sidecar::unpack_compressed_snapshot(full_path, snapshot_pair.full_snapshot.slot)?;
-    snapshot_files.extend(sidecar::unpack_compressed_snapshot(
-        inc_path,
-        incremental_snapshot_data.slot,
-    )?);
+        sidecar::unpack_compressed_snapshot(full_path, snapshot_pair.full_snapshot.slot)?
+            .account_files;
+    snapshot_files.extend(
+        sidecar::unpack_compressed_snapshot(inc_path, incremental_snapshot_data.slot)?
+            .account_files,
+    );
 
     let slot = incremental_snapshot_data.slot;
 

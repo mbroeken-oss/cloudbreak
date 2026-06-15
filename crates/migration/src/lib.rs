@@ -17,6 +17,7 @@ mod m20251021_222145_create_service_health_table;
 mod m20260325_000000_drop_temp_tables;
 mod m20260414_000000_create_indexer_filters_table;
 mod m20260522_000000_create_environment_info_table;
+mod m20260528_000000_create_epoch_stakes_table;
 
 pub struct Migrator;
 
@@ -34,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260325_000000_drop_temp_tables::Migration),
             Box::new(m20260414_000000_create_indexer_filters_table::Migration),
             Box::new(m20260522_000000_create_environment_info_table::Migration),
+            Box::new(m20260528_000000_create_epoch_stakes_table::Migration),
         ]
     }
 }

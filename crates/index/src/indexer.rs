@@ -190,6 +190,9 @@ pub async fn run(config: &str) -> CloudbreakResult<()> {
         )
         .await;
 
+    let _epoch_stakes_handle =
+        modules::epoch_stakes::spawn_epoch_stakes_recomputer(db.clone(), config.clone());
+
     metrics::GAPS_LIST
         .set(indexer_state.self_healing_state.gaps_list.clone())
         .expect("Failed to set gaps list");

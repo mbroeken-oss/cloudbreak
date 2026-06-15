@@ -25,6 +25,9 @@ sea-orm = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-stake-interface = { workspace = true, features = ["serde"] }
+solana-vote-interface = { workspace = true }
+bincode = "1.3"
 yellowstone-grpc-proto = { workspace = true }
 solana-program = { workspace = true }
 futures = { workspace = true }

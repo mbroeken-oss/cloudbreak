@@ -112,7 +112,17 @@ impl AccountSelectorConfig {
             self.include.iter().any(|p| &p.0 == program)
         }
     }
+
+    /// `getVoteAccounts` requires both the Vote and Stake programs to be indexed.
+    pub fn supports_vote_accounts(&self) -> bool {
+        self.is_program_selected(&VOTE_PROGRAM_ID) && self.is_program_selected(&STAKE_PROGRAM_ID)
+    }
 }
+
+pub const VOTE_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("Vote111111111111111111111111111111111111111");
+pub const STAKE_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("Stake11111111111111111111111111111111111111");
 
 pub struct EnvironmentInfo;
 

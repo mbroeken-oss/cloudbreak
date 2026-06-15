@@ -49,6 +49,7 @@ solana-serde = "3.0.0"
 solana-rpc-client-api = "3.1.5"
 solana-account-decoder-client-types = "3.1.5"
 solana-account-decoder = "3.1.5"
+solana-vote-interface = { version = "4.0.4", default-features = false, features = ["bincode", "serde"] }
 solana-commitment-config = "3.1.0"
 solana-client = "3.1.5"
 futures = "0.3.31"
