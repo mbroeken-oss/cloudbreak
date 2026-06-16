@@ -202,7 +202,11 @@ impl SelfHealingState {
                 }
 
                 let start_time = tokio::time::Instant::now();
-                tracing::info!("Starting to fill gaps: {:?}", confirmed_gaps_list);
+                tracing::info!(
+                    "Starting to fill gaps(count: {}): {:?}",
+                    confirmed_gaps_list.len(),
+                    confirmed_gaps_list
+                );
 
                 confirmed_gaps_list.sort_unstable();
                 let newest_slot_in_gaps_list =
@@ -358,9 +362,11 @@ impl SelfHealingState {
 
                 let elapsed = start_time.elapsed().as_secs_f64();
                 tracing::info!(
-                    "Finished filling gaps: {:?} - in {} seconds",
-                    covered_gaps_list,
-                    elapsed
+                    target: "self_healing",
+                    "Finished filling gaps(count: {}) - in {} seconds: {:?} ",
+                    covered_gaps_list.len(),
+                    elapsed,
+                    covered_gaps_list
                 );
 
                 // If every gap has been repaired, resume finalization

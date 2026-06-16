@@ -7,6 +7,7 @@ use cloudbreak_core::IndexConfig;
 use sea_orm::DatabaseConnection;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::{task::JoinSet, time::Instant};
 use yellowstone_grpc_proto::geyser::CommitmentLevel;
@@ -21,6 +22,8 @@ const SLOT_FINALIZE_BATCH_SIZE: usize = 500;
 /// Emits a warning when the in-memory blocks map grows beyond this size, as an alert for
 /// further debugging (e.g. finalization stalled or a fork is leaving orphaned entries behind).
 const BLOCKS_MAP_WARN_THRESHOLD: usize = 500;
+
+const BLOCKS_MAP_WARN_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A confirmed-but-not-yet-finalized block kept in memory until it is finalized.
 ///
@@ -44,6 +47,8 @@ pub struct FinalizerInner {
     pub pending: BTreeSet<u64>,
     /// While non-empty the worker does not drain `pending` (finalization is paused).
     pub pause_reasons: HashSet<PauseReason>,
+    /// Last time the blocks map was warned about being large.
+    pub last_blocks_map_warn: Option<Instant>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -150,12 +155,19 @@ impl SlotFinalizer {
             tracing::error!("Block data for slot {} already existed in the map", slot);
         }
         if len > BLOCKS_MAP_WARN_THRESHOLD {
-            tracing::warn!(
-                target: "finalizer_blocks_map",
-                "Finalizer blocks map is unexpectedly large: {} entries (slot {})",
-                len,
-                slot
-            );
+            let now = Instant::now();
+            let should_warn = inner
+                .last_blocks_map_warn
+                .is_none_or(|last| now.duration_since(last) >= BLOCKS_MAP_WARN_INTERVAL);
+            if should_warn {
+                inner.last_blocks_map_warn = Some(now);
+                tracing::warn!(
+                    target: "finalizer_blocks_map",
+                    "Finalizer blocks map is unexpectedly large: {} entries (slot {})",
+                    len,
+                    slot
+                );
+            }
         }
     }
 
@@ -376,8 +388,9 @@ impl SlotFinalizer {
                 .join(" -> ");
             tracing::info!(
                 target: "finalize_ancestors",
-                "Finalizing slot {} together with missed-notification ancestors: {:?}",
+                "Finalizing slot {} together with missed-notification ancestors(count: {}): {:?}",
                 slot,
+                ancestors.len(),
                 ancestors
             );
         }
