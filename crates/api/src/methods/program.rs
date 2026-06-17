@@ -27,6 +27,7 @@ use sea_orm::sqlx::{self, Row};
 use solana_account::AccountSharedData;
 use solana_account_decoder::parse_account_data::AccountAdditionalDataV3;
 use solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig, encode_ui_account};
+use solana_account_decoder_client_types::{UiAccount, UiAccountData};
 use solana_commitment_config::CommitmentLevel;
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::config::RpcProgramAccountsConfig;
@@ -237,7 +238,19 @@ pub async fn get_program_accounts(
 
     let metrics_data = GpaMetricsData::new(format!("gpa{mint_filter_label}"));
 
-    let mut request_processor = state.gpa_processor.for_request();
+    let rows_only_base64 = is_rows_only_base64(
+        config
+            .account_config
+            .encoding
+            .unwrap_or(UiAccountEncoding::Binary),
+        config.account_config.data_slice,
+    );
+
+    let mut request_processor = if rows_only_base64 {
+        GpaProcessor::Standard
+    } else {
+        state.gpa_processor.for_request()
+    };
 
     // Database query
     let rx = gpa_db_query(
@@ -249,6 +262,7 @@ pub async fn get_program_accounts(
             accounts_filters,
             snapshot_filters,
             metrics_data: metrics_data.clone(),
+            rows_only_base64,
         },
         &mut request_processor,
     );
@@ -278,6 +292,7 @@ pub struct GpaDbQueryInput {
     pub accounts_filters: String,
     pub snapshot_filters: String,
     pub metrics_data: GpaMetricsData,
+    pub rows_only_base64: bool,
 }
 
 fn gpa_db_query(
@@ -483,11 +498,22 @@ pub fn encoding_to_string(encoding: &UiAccountEncoding) -> &'static str {
 }
 
 pub fn load_sql(input: &GpaDbQueryInput) -> String {
-    let sql = include_str!("../db/getProgramAccounts.sql");
+    let sql = if input.rows_only_base64 {
+        include_str!("../db/getProgramAccountsRowsOnly.sql")
+    } else {
+        include_str!("../db/getProgramAccounts.sql")
+    };
     let sql = sql.replace("-- {accounts_filters}", &input.accounts_filters);
     let sql = sql.replace("-- {snapshot_filters}", &input.snapshot_filters);
 
     sql.replace("$2", input.latest_slot.to_string().as_str())
+}
+
+pub fn is_rows_only_base64(
+    encoding: UiAccountEncoding,
+    data_slice: Option<UiDataSliceConfig>,
+) -> bool {
+    encoding == UiAccountEncoding::Base64 && data_slice.is_some_and(|slice| slice.length == 0)
 }
 
 pub fn process_row(
@@ -504,9 +530,33 @@ pub fn process_row(
         let lamports = row.get::<i64, _>(2);
         let executable = row.get(4);
         let rent_epoch = row.get::<rust_decimal::Decimal, _>(5);
+        let data_size = row
+            .try_get::<i32, _>("data_size")
+            .map(|size| size as usize)
+            .ok();
         let data: Vec<u8> = row.get(6);
+        let space = data_size.unwrap_or(data.len());
 
-        *response_bytes += data.len() as u64;
+        *response_bytes += space as u64;
+
+        if is_rows_only_base64(encoding, data_slice) {
+            check_account_data_len_for_encoding(encoding, data_slice, space, &pubkey)?;
+
+            return Ok(KeyedRpcAccount {
+                pubkey,
+                account: RpcKeyedAccount {
+                    pubkey: pubkey.to_string(),
+                    account: UiAccount {
+                        lamports: lamports as u64,
+                        data: UiAccountData::Binary(String::new(), UiAccountEncoding::Base64),
+                        owner: owner.to_string(),
+                        executable,
+                        rent_epoch: rent_epoch.to_u64().unwrap_or(0),
+                        space: Some(space as u64),
+                    },
+                },
+            });
+        }
 
         let account_shared_data = AccountSharedData::create_from_existing_shared_data(
             lamports as u64,

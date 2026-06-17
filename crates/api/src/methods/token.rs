@@ -23,8 +23,9 @@ use solana_account_decoder::parse_account_data::{
     AccountAdditionalDataV3, SplTokenAdditionalDataV2,
 };
 use solana_account_decoder::{
-    MAX_BASE58_BYTES, UiAccountData, UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
+    MAX_BASE58_BYTES, UiAccountEncoding, UiDataSliceConfig, encode_ui_account,
 };
+use solana_account_decoder_client_types::{UiAccount, UiAccountData};
 use solana_commitment_config::CommitmentLevel;
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
@@ -261,8 +262,17 @@ pub async fn get_token_accounts_by_owner_or_delegate(
         tracing::Span::current().record("mint_filter", "true");
     }
 
+    let encoding = config
+        .as_ref()
+        .and_then(|config| config.encoding)
+        .unwrap_or(UiAccountEncoding::Binary);
+    let data_slice = config.as_ref().and_then(|config| config.data_slice);
+    let rows_only_base64 = program::is_rows_only_base64(encoding, data_slice);
+
     // Load sql and add dynamic filters to it
-    let sql = if let Some(encoding) = config.as_ref().map(|config| config.encoding) {
+    let sql = if rows_only_base64 {
+        include_str!("../db/getProgramAccountsRowsOnly.sql")
+    } else if let Some(encoding) = config.as_ref().map(|config| config.encoding) {
         // If we already have the mint data, we don't need to join any additional mint data
         if encoding == Some(UiAccountEncoding::JsonParsed) && filter_mint_data.is_none() {
             include_str!("../db/getTokenAccountsByOwner.sql")
@@ -290,11 +300,6 @@ pub async fn get_token_accounts_by_owner_or_delegate(
 
     let mut rows = sqlx::raw_sql(&sql).fetch(pool);
 
-    let encoding = config
-        .as_ref()
-        .and_then(|config| config.encoding)
-        .unwrap_or(UiAccountEncoding::Binary);
-    let data_slice = config.as_ref().and_then(|config| config.data_slice);
     let should_filter = encoding == UiAccountEncoding::JsonParsed;
 
     let mut response_bytes = 0;
@@ -566,11 +571,30 @@ fn proces_token_row(
     let lamports = row.get::<i64, _>(2);
     let executable = row.get(4);
     let rent_epoch = row.get::<rust_decimal::Decimal, _>(5);
+    let data_size = row
+        .try_get::<i32, _>("data_size")
+        .map(|size| size as usize)
+        .ok();
     let data: Vec<u8> = row.get(6);
+    let space = data_size.unwrap_or(data.len());
 
-    *response_bytes += data.len() as u64;
+    *response_bytes += space as u64;
 
-    check_account_data_len_for_encoding(encoding, data_slice, data.len(), &pubkey)?;
+    check_account_data_len_for_encoding(encoding, data_slice, space, &pubkey)?;
+
+    if program::is_rows_only_base64(encoding, data_slice) {
+        return Ok(RpcKeyedAccount {
+            pubkey: pubkey.to_string(),
+            account: UiAccount {
+                lamports: lamports as u64,
+                data: UiAccountData::Binary(String::new(), UiAccountEncoding::Base64),
+                owner: owner.to_string(),
+                executable,
+                rent_epoch: rent_epoch.to_u64().unwrap_or(0),
+                space: Some(space as u64),
+            },
+        });
+    }
 
     let row_mint_data: Option<Vec<u8>> = row.try_get("mint_data").ok();
     let mint_pubkey: Pubkey = Pubkey::new_from_array(row.get("token_mint"));
