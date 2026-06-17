@@ -26,6 +26,15 @@ use yellowstone_grpc_proto::{geyser::CommitmentLevel, prelude::UnixTimestamp};
 
 use crate::metrics;
 
+const DB_DEADLOCK_RETRIES: usize = 3;
+
+fn is_deadlock<T>(result: &Result<T, sea_orm::DbErr>) -> bool {
+    result
+        .as_ref()
+        .err()
+        .is_some_and(|err| err.to_string().contains("deadlock detected"))
+}
+
 /// The service health is set to healthy when the snapshot is processed successfully. And
 ///  to unhealthy when we get a slot gap.
 ///
@@ -178,30 +187,45 @@ pub async fn cleanup_closed_accounts(
         return;
     }
 
-    let query = db.execute(Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        cleanup_closed_accounts_sql,
-        vec![
-            Value::Array(
-                sea_orm::sea_query::ArrayType::Bytes,
-                Some(Box::new(
-                    pubkeys
-                        .into_iter()
-                        .map(|pubkey| Value::Bytes(Some(Box::new(pubkey))))
-                        .collect(),
-                )),
-            ),
-            Value::BigInt(Some(slot as i64)),
-        ],
-    ));
+    let mut result = Err(sea_orm::DbErr::RecordNotInserted);
+    for attempt in 1..=DB_DEADLOCK_RETRIES {
+        let query = db.execute(Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Postgres,
+            cleanup_closed_accounts_sql,
+            vec![
+                Value::Array(
+                    sea_orm::sea_query::ArrayType::Bytes,
+                    Some(Box::new(
+                        pubkeys
+                            .iter()
+                            .cloned()
+                            .map(|pubkey| Value::Bytes(Some(Box::new(pubkey))))
+                            .collect(),
+                    )),
+                ),
+                Value::BigInt(Some(slot as i64)),
+            ],
+        ));
 
-    let result = timeout(query_timeout, query)
-        .await
-        .unwrap_or_else(|elapsed| {
-            tracing::error!("cleanup_closed_accounts timeout ERROR: {}", elapsed);
-            metrics::increment_db_errors();
-            Err(sea_orm::DbErr::RecordNotInserted)
-        });
+        result = timeout(query_timeout, query)
+            .await
+            .unwrap_or_else(|elapsed| {
+                tracing::error!("cleanup_closed_accounts timeout ERROR: {}", elapsed);
+                Err(sea_orm::DbErr::RecordNotInserted)
+            });
+
+        if !is_deadlock(&result) || attempt == DB_DEADLOCK_RETRIES {
+            break;
+        }
+
+        tracing::warn!(
+            "cleanup_closed_accounts deadlock for slot {}, retrying attempt {}/{}",
+            slot,
+            attempt + 1,
+            DB_DEADLOCK_RETRIES
+        );
+        tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
+    }
 
     match result {
         Ok(res) => {
@@ -244,30 +268,46 @@ pub async fn cleanup_accounts(
     let cleanup_sql = cleanup_sql.replace("accounts_table_name", table_name);
     let query_timeout = Duration::from_secs(config.database.finalize_slot_queries_timeout);
 
-    let query = db.execute(Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        cleanup_sql,
-        vec![
-            Value::BigInt(Some(slot as i64)),
-            Value::Array(
-                sea_orm::sea_query::ArrayType::Bytes,
-                Some(Box::new(
-                    pubkeys
-                        .into_iter()
-                        .map(|pubkey| Value::Bytes(Some(Box::new(pubkey))))
-                        .collect(),
-                )),
-            ),
-        ],
-    ));
+    let mut result = Err(sea_orm::DbErr::RecordNotInserted);
+    for attempt in 1..=DB_DEADLOCK_RETRIES {
+        let query = db.execute(Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Postgres,
+            cleanup_sql.clone(),
+            vec![
+                Value::BigInt(Some(slot as i64)),
+                Value::Array(
+                    sea_orm::sea_query::ArrayType::Bytes,
+                    Some(Box::new(
+                        pubkeys
+                            .iter()
+                            .cloned()
+                            .map(|pubkey| Value::Bytes(Some(Box::new(pubkey))))
+                            .collect(),
+                    )),
+                ),
+            ],
+        ));
 
-    let result = timeout(query_timeout, query)
-        .await
-        .unwrap_or_else(|elapsed| {
-            tracing::error!("cleanup_accounts timeout ERROR: {}", elapsed);
-            metrics::increment_db_errors();
-            Err(sea_orm::DbErr::RecordNotInserted)
-        });
+        result = timeout(query_timeout, query)
+            .await
+            .unwrap_or_else(|elapsed| {
+                tracing::error!("cleanup_accounts timeout ERROR: {}", elapsed);
+                Err(sea_orm::DbErr::RecordNotInserted)
+            });
+
+        if !is_deadlock(&result) || attempt == DB_DEADLOCK_RETRIES {
+            break;
+        }
+
+        tracing::warn!(
+            "cleanup_accounts deadlock for slot {} on {}, retrying attempt {}/{}",
+            slot,
+            table_name,
+            attempt + 1,
+            DB_DEADLOCK_RETRIES
+        );
+        tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
+    }
 
     match result {
         Ok(res) => {

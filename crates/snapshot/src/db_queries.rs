@@ -4,7 +4,7 @@
  */
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -14,7 +14,7 @@ use cloudbreak_entity::snapshot_accounts::{self};
 use rust_decimal::Decimal;
 use sea_orm::{
     ActiveValue::Set, ConnectionTrait, DatabaseConnection, EntityTrait, Statement,
-    TransactionTrait, Value,
+    TransactionTrait, Value, sea_query::OnConflict,
 };
 use tokio::time::Instant;
 use yellowstone_grpc_proto::geyser::SubscribeUpdateAccount;
@@ -23,6 +23,7 @@ use crate::metrics;
 use crate::stake_data::SnapshotStakeData;
 
 pub const INSERT_SNAPSHOT_ACCOUNT_VERSIONS_TEMP_TABLE_BATCH_SIZE: usize = 1_000;
+const EPOCH_STAKES_UPSERT_BATCH_SIZE: usize = 1_000;
 
 pub async fn upsert_accounts_batched(
     db: &DatabaseConnection,
@@ -30,38 +31,56 @@ pub async fn upsert_accounts_batched(
 ) -> Result<(), anyhow::Error> {
     let start_time = Instant::now();
 
-    let result = snapshot_accounts::Entity::insert_many(
-        chunk
-            .iter()
-            .cloned()
-            .map(|account_update| {
-                let account = account_update
-                    .account
-                    .ok_or_else(|| anyhow::anyhow!("account is None"))?;
+    let mut seen_accounts = HashSet::with_capacity(chunk.len());
+    let mut models = Vec::with_capacity(chunk.len());
 
-                if account.pubkey.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "pubkey is empty for account: {:?}",
-                        account
-                    ));
-                }
+    for account_update in chunk {
+        let account = account_update
+            .account
+            .ok_or_else(|| anyhow::anyhow!("account is None"))?;
 
-                Ok(snapshot_accounts::ActiveModel {
-                    pubkey: Set(account.pubkey),
-                    owner: Set(account.owner),
-                    lamports: Set(account.lamports as i64),
-                    slot: Set(account_update.slot as i64),
-                    executable: Set(account.executable),
-                    rent_epoch: Set(Decimal::from(account.rent_epoch)),
-                    data: Set(account.data),
-                    write_version: Set(account.write_version as i64),
-                    ..Default::default()
-                })
-            })
-            .collect::<Result<Vec<_>, anyhow::Error>>()?,
-    )
-    .exec_without_returning(db)
-    .await;
+        if account.pubkey.is_empty() {
+            return Err(anyhow::anyhow!(
+                "pubkey is empty for account: {:?}",
+                account
+            ));
+        }
+
+        let slot = account_update.slot as i64;
+        let key = (account.owner.clone(), account.pubkey.clone(), slot);
+        if !seen_accounts.insert(key) {
+            continue;
+        }
+
+        models.push(snapshot_accounts::ActiveModel {
+            pubkey: Set(account.pubkey),
+            owner: Set(account.owner),
+            lamports: Set(account.lamports as i64),
+            slot: Set(slot),
+            executable: Set(account.executable),
+            rent_epoch: Set(Decimal::from(account.rent_epoch)),
+            data: Set(account.data),
+            write_version: Set(account.write_version as i64),
+            ..Default::default()
+        });
+    }
+
+    if models.is_empty() {
+        return Ok(());
+    }
+
+    let result = snapshot_accounts::Entity::insert_many(models)
+        .on_conflict(
+            OnConflict::columns([
+                snapshot_accounts::Column::Owner,
+                snapshot_accounts::Column::Pubkey,
+                snapshot_accounts::Column::Slot,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await;
 
     match result {
         Ok(result) => {
@@ -491,47 +510,9 @@ pub async fn persist_epoch_stakes(
     let start_time = Instant::now();
     let txn = db.begin().await?;
 
-    // Build a multi-row VALUES clause. Each row has 5 placeholders:
-    // (epoch, vote_pubkey, node_pubkey, activated_stake, in_epoch_set).
-    let mut values_sql = String::new();
-    let mut params: Vec<Value> = Vec::with_capacity(data.voters.len() * 5);
-    for (idx, row) in data.voters.iter().enumerate() {
-        if idx > 0 {
-            values_sql.push_str(", ");
-        }
-        let base = idx * 5;
-        values_sql.push_str(&format!(
-            "(${}::BIGINT, ${}::BYTEA, ${}::BYTEA, ${}::BIGINT, ${}::BOOLEAN)",
-            base + 1,
-            base + 2,
-            base + 3,
-            base + 4,
-            base + 5,
-        ));
-        params.push(Value::from(data.epoch as i64));
-        params.push(Value::from(row.vote_pubkey.to_bytes().to_vec()));
-        params.push(Value::from(row.node_pubkey.to_bytes().to_vec()));
-        params.push(Value::from(row.activated_stake as i64));
-        params.push(Value::from(row.in_epoch_set));
+    for voters in data.voters.chunks(EPOCH_STAKES_UPSERT_BATCH_SIZE) {
+        upsert_epoch_stakes_batch(&txn, data.epoch, voters).await?;
     }
-
-    let upsert_sql = format!(
-        "INSERT INTO epoch_stakes \
-            (epoch, vote_pubkey, node_pubkey, activated_stake, in_epoch_set) \
-         VALUES {values_sql} \
-         ON CONFLICT (epoch, vote_pubkey) DO UPDATE SET \
-            node_pubkey     = EXCLUDED.node_pubkey, \
-            activated_stake = EXCLUDED.activated_stake, \
-            in_epoch_set    = EXCLUDED.in_epoch_set, \
-            updated_at      = now()"
-    );
-
-    txn.execute(Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        &upsert_sql,
-        params,
-    ))
-    .await?;
 
     // Prune older epochs — keep current and current-1 only.
     txn.execute(Statement::from_sql_and_values(
@@ -550,6 +531,57 @@ pub async fn persist_epoch_stakes(
         data.epoch,
         start_time.elapsed().as_secs_f64()
     );
+
+    Ok(())
+}
+
+async fn upsert_epoch_stakes_batch<C>(
+    db: &C,
+    epoch: u64,
+    voters: &[crate::stake_data::VoterStakeRow],
+) -> Result<(), anyhow::Error>
+where
+    C: ConnectionTrait,
+{
+    let mut values_sql = String::new();
+    let mut params: Vec<Value> = Vec::with_capacity(voters.len() * 5);
+    for (idx, row) in voters.iter().enumerate() {
+        if idx > 0 {
+            values_sql.push_str(", ");
+        }
+        let base = idx * 5;
+        values_sql.push_str(&format!(
+            "(${}::BIGINT, ${}::BYTEA, ${}::BYTEA, ${}::BIGINT, ${}::BOOLEAN)",
+            base + 1,
+            base + 2,
+            base + 3,
+            base + 4,
+            base + 5,
+        ));
+        params.push(Value::from(epoch as i64));
+        params.push(Value::from(row.vote_pubkey.to_bytes().to_vec()));
+        params.push(Value::from(row.node_pubkey.to_bytes().to_vec()));
+        params.push(Value::from(row.activated_stake as i64));
+        params.push(Value::from(row.in_epoch_set));
+    }
+
+    let upsert_sql = format!(
+        "INSERT INTO epoch_stakes \
+            (epoch, vote_pubkey, node_pubkey, activated_stake, in_epoch_set) \
+         VALUES {values_sql} \
+         ON CONFLICT (epoch, vote_pubkey) DO UPDATE SET \
+            node_pubkey     = EXCLUDED.node_pubkey, \
+            activated_stake = EXCLUDED.activated_stake, \
+            in_epoch_set    = EXCLUDED.in_epoch_set, \
+            updated_at      = now()"
+    );
+
+    db.execute(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        &upsert_sql,
+        params,
+    ))
+    .await?;
 
     Ok(())
 }

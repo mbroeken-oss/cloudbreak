@@ -21,6 +21,9 @@ use crate::{
     modules::{finalize_slot::SlotFinalizer, snapshot::SnapshotProcessingState},
 };
 
+const SMALL_GAP_HEALTH_GRACE: Duration = Duration::from_secs(180);
+const SMALL_GAP_MAX_SLOTS: usize = 128;
+
 /// Tracks slot continuity on the gRPC block stream and repairs confirmed gaps out of snapshots.
 ///
 /// Gaps are confirmed purely from the block chain (`parent_slot` / `parent_blockhash`) without any
@@ -32,6 +35,8 @@ pub struct SelfHealingState {
     pub last_slot_received: Arc<Mutex<u64>>,
     /// Slots pending repair from a snapshot.
     pub gaps_list: Arc<Mutex<Vec<u64>>>,
+    /// Slots temporarily tolerated as likely reordering before they become confirmed repair gaps.
+    pub deferred_gaps: Arc<Mutex<BTreeSet<u64>>>,
     /// For each confirmed gap, the last live slot we received before it (`gap_start - 1`). After
     /// the gap is repaired we seed an ancestor walk from these slots, because the repaired slots
     /// carry no chain data and therefore can not bridge the walk back to them (see
@@ -45,16 +50,21 @@ impl SelfHealingState {
         Self {
             last_slot_received: Arc::new(Mutex::new(0)),
             gaps_list: Arc::new(Mutex::new(Vec::new())),
+            deferred_gaps: Arc::new(Mutex::new(BTreeSet::new())),
             gap_boundaries: Arc::new(Mutex::new(BTreeSet::new())),
             finalizer,
         }
     }
 
-    fn remove_slot_from_gaps_list(&self, slot: u64) {
+    fn remove_slot_from_gap_tracking(&self, slot: u64) {
         self.gaps_list
             .lock()
             .expect("Failed to lock gaps_list")
             .retain(|s| *s != slot);
+        self.deferred_gaps
+            .lock()
+            .expect("Failed to lock deferred_gaps")
+            .remove(&slot);
     }
 
     /// Checks whether `slot` continues the chain from the last block we received.
@@ -64,7 +74,13 @@ impl SelfHealingState {
     ///   between were skipped/empty: nothing to do.
     /// - Otherwise at least one real block was missed: the whole range is queued for repair, the
     ///   service is marked unhealthy, and finalization is paused until the gap is filled.
-    pub async fn check_slot_gap(&self, slot: u64, parent_slot: u64, parent_blockhash: &str) {
+    pub async fn check_slot_gap(
+        &self,
+        slot: u64,
+        parent_slot: u64,
+        parent_blockhash: &str,
+        snapshot_processing_state: Arc<Mutex<SnapshotProcessingState>>,
+    ) {
         let last_slot_received = *self
             .last_slot_received
             .lock()
@@ -77,8 +93,8 @@ impl SelfHealingState {
                 last_slot_received
             );
 
-            // If we had added the slot to the gaps list, remove it
-            self.remove_slot_from_gaps_list(slot);
+            // If we had added the slot to gap tracking, remove it.
+            self.remove_slot_from_gap_tracking(slot);
 
             return;
         }
@@ -113,23 +129,38 @@ impl SelfHealingState {
                     new_gap_slots.len()
                 );
 
-                self.gaps_list
-                    .lock()
-                    .expect("Failed to lock gaps_list")
-                    .extend(new_gap_slots);
+                if new_gap_slots.len() <= SMALL_GAP_MAX_SLOTS {
+                    tracing::warn!(
+                        target: "self_healing_degraded",
+                        "Small confirmed gap detected ({} slot(s)); delaying unhealthy state for {:?} to allow reordered blocks to arrive",
+                        new_gap_slots.len(),
+                        SMALL_GAP_HEALTH_GRACE
+                    );
+                    self.deferred_gaps
+                        .lock()
+                        .expect("Failed to lock deferred_gaps")
+                        .extend(new_gap_slots.iter().copied());
+                    self.schedule_deferred_pause(
+                        new_gap_slots,
+                        last_slot_received,
+                        snapshot_processing_state,
+                    );
+                } else {
+                    // Large gaps are unlikely to be simple reordering, so pause immediately.
+                    self.gaps_list
+                        .lock()
+                        .expect("Failed to lock gaps_list")
+                        .extend(new_gap_slots.iter().copied());
 
-                // Remember the last live slot before the gap so we can seed an ancestor walk from
-                // it once the gap is repaired (the repaired slots can not carry the walk back to it).
-                self.gap_boundaries
-                    .lock()
-                    .expect("Failed to lock gap_boundaries")
-                    .insert(last_slot_received);
+                    // Remember the last live slot before the gap so we can seed an ancestor walk from
+                    // it once the gap is repaired (the repaired slots can not carry the walk back to it).
+                    self.gap_boundaries
+                        .lock()
+                        .expect("Failed to lock gap_boundaries")
+                        .insert(last_slot_received);
 
-                // Pause finalization and mark the service unhealthy immediately. `fill_gaps` resumes
-                // it once every slot in the gap has been repaired. NOTE: a gap discovered during
-                // startup pauses the very worker that completes startup; that is intentionally
-                // unsupported and `fill_gaps` fails fast in that case.
-                self.finalizer.pause().await;
+                    self.finalizer.pause().await;
+                }
             }
         }
 
@@ -137,6 +168,69 @@ impl SelfHealingState {
             .last_slot_received
             .lock()
             .expect("Failed to lock last_slot_received") = slot;
+    }
+
+    fn schedule_deferred_pause(
+        &self,
+        gap_slots: Vec<u64>,
+        boundary_slot: u64,
+        snapshot_processing_state: Arc<Mutex<SnapshotProcessingState>>,
+    ) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(SMALL_GAP_HEALTH_GRACE).await;
+
+            let still_pending = {
+                let mut deferred_gaps = state
+                    .deferred_gaps
+                    .lock()
+                    .expect("Failed to lock deferred_gaps");
+                gap_slots
+                    .into_iter()
+                    .filter(|slot| deferred_gaps.remove(slot))
+                    .collect::<Vec<_>>()
+            };
+
+            if !still_pending.is_empty() {
+                let is_startup_finished = *snapshot_processing_state
+                    .lock()
+                    .expect("Failed to lock snapshot_processing_state")
+                    == SnapshotProcessingState::FinishedAndCleanedUp;
+
+                tracing::warn!(
+                    target: "self_healing_degraded",
+                    "Small gap still pending after grace window; queuing {} slot(s) for repair{}",
+                    still_pending.len(),
+                    if is_startup_finished {
+                        " and pausing finalization"
+                    } else {
+                        "; startup is still processing, so finalization stays unpaused"
+                    }
+                );
+
+                state
+                    .gaps_list
+                    .lock()
+                    .expect("Failed to lock gaps_list")
+                    .extend(still_pending);
+                state
+                    .gap_boundaries
+                    .lock()
+                    .expect("Failed to lock gap_boundaries")
+                    .insert(boundary_slot);
+
+                if is_startup_finished {
+                    state.finalizer.pause().await;
+                } else {
+                    state.finalizer.resume().await;
+                }
+            } else {
+                tracing::info!(
+                    target: "self_healing_degraded",
+                    "Small gap resolved during grace window; keeping service healthy"
+                );
+            }
+        });
     }
 
     /// Starts a separate task that periodically repairs confirmed slot gaps out of incremental snapshots.
@@ -183,23 +277,24 @@ impl SelfHealingState {
                     continue;
                 }
 
-                // We have confirmed gaps to repair. Finalization was already paused when the gap was
-                // discovered (in `check_slot_gap`). A confirmed gap is only expected after startup has
-                // finished: during startup the (now paused) finalizer worker is what completes startup,
-                // so a gap there can never be repaired. Fail fast instead of stalling forever.
+                // During startup the finalizer worker is what completes snapshot processing.
+                // If a reordered live stream exposes a gap before startup has finished, do not
+                // keep finalization paused and do not crash the process; keep the gap queued and
+                // let the normal repair path handle it once startup has crossed the finish line.
                 let is_startup_finished = *indexer_state
                     .snapshot_processing_state
                     .lock()
                     .expect("Failed to lock snapshot_processing_state")
                     == SnapshotProcessingState::FinishedAndCleanedUp;
                 if !is_startup_finished {
-                    tracing::error!(
-                        "Confirmed slot gap detected before startup finished; cannot repair gaps during startup"
+                    tracing::warn!(
+                        "Confirmed slot gap detected before startup finished; deferring repair until startup completes"
                     );
-                    panic!(
-                        "Confirmed slot gap detected before startup finished; cannot repair gaps during startup"
-                    );
+                    self.finalizer.resume().await;
+                    continue;
                 }
+
+                self.finalizer.pause().await;
 
                 let start_time = tokio::time::Instant::now();
                 tracing::info!(
@@ -314,7 +409,7 @@ impl SelfHealingState {
                     // Snapshot data is already finalized, so enqueue the repaired slot directly
                     // (bypassing the back-pressure bound). It will be finalized in order on resume.
                     self.finalizer.enqueue_unbounded(slot);
-                    self.remove_slot_from_gaps_list(slot);
+                    self.remove_slot_from_gap_tracking(slot);
                     repaired_slots.insert(slot);
                 }
 
@@ -338,7 +433,7 @@ impl SelfHealingState {
                         empty_slots
                     );
                     for slot in &empty_slots {
-                        self.remove_slot_from_gaps_list(*slot);
+                        self.remove_slot_from_gap_tracking(*slot);
                     }
                 }
 

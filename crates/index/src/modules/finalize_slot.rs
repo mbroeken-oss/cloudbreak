@@ -439,30 +439,21 @@ async fn finalize_slot(
         .map(|batch| batch.to_vec())
         .collect::<Vec<_>>();
 
-    let mut join_set = JoinSet::new();
-
     updated_accounts_during_startup.cleanup_stored_accounts_once(&db, slot, config);
 
     for batch in batches {
-        let db_clone = db.clone();
-        let batch_clone = batch.clone();
-        let new_accounts_in_slot_clone = new_accounts_in_slot.clone();
-        let updated_accounts_during_startup = updated_accounts_during_startup.clone();
-        let config_clone = config.clone();
-        join_set.spawn(async move {
-            let _guard = metrics::TokioTaskCounterGuard::new("finalize_slot_internal");
+        let _guard = metrics::TokioTaskCounterGuard::new("finalize_slot_internal");
 
-            db_queries::cleanup_accounts(
-                &db_clone,
-                batch_clone,
-                slot,
-                "accounts",
-                new_accounts_in_slot_clone,
-                "cleanup_accounts_batch",
-                &config_clone,
-            )
-            .await;
-        });
+        db_queries::cleanup_accounts(
+            &db,
+            batch.clone(),
+            slot,
+            "accounts",
+            new_accounts_in_slot.clone(),
+            "cleanup_accounts_batch",
+            config,
+        )
+        .await;
 
         // If we are in startup, we just save the updated accounts to delete them after the snapshot is processed
         if updated_accounts_during_startup.is_startup() {
@@ -470,60 +461,41 @@ async fn finalize_slot(
             continue;
         }
 
-        let db_clone = db.clone();
-        let config_clone = config.clone();
-        join_set.spawn(async move {
-            let _guard = metrics::TokioTaskCounterGuard::new("finalize_slot_internal");
-
-            // with the latest changes it doesn't make sense any more to try to measure this on the snapshot accounts table
-            // but this will asintotically become more accurate as the snapshot accounts table is deleted/cleaned up
-            let dummy_new_accounts_in_slot = Arc::new(Mutex::new(0));
-
-            db_queries::cleanup_accounts(
-                &db_clone,
-                batch,
-                slot,
-                "snapshot_accounts",
-                dummy_new_accounts_in_slot,
-                "cleanup_snapshot_accounts_batch",
-                &config_clone,
-            )
-            .await;
-        });
+        // Run snapshot cleanup in the same sequence as live cleanup. Parallel cleanup across the
+        // partitioned accounts tables causes occasional Postgres deadlocks during gap repair.
+        db_queries::cleanup_accounts(
+            &db,
+            batch,
+            slot,
+            "snapshot_accounts",
+            Arc::new(Mutex::new(0)),
+            "cleanup_snapshot_accounts_batch",
+            config,
+        )
+        .await;
     }
 
     let closed_accounts = updated_accounts.closed_accounts.clone();
-    let db_clone = db.clone();
-    let config_clone = config.clone();
-    join_set.spawn(async move {
-        // Updated accounts doesn't include the closed accounts, instead this query will delete the closed accounts inserted
-        //  and any previous version of the accounts, so it's safe to execute concurrently with the cleanup_accounts tasks
-        // because there is not overlap between the accounts sets
-        db_queries::cleanup_closed_accounts(&db_clone, closed_accounts, slot, &config_clone).await;
-    });
+    db_queries::cleanup_closed_accounts(&db, closed_accounts, slot, config).await;
 
     // If we are in startup, we just save the closed accounts to delete them after the snapshot is processed
     if updated_accounts_during_startup.is_startup() {
         updated_accounts_during_startup
             .add_batch_to_cache_during_startup(updated_accounts.closed_accounts);
     } else {
-        let config_clone = config.clone();
-        join_set.spawn(async move {
-            // Closed accounts are not included in the updated accounts, so we need to cleanup them separately
-            db_queries::cleanup_accounts(
-                &db,
-                updated_accounts.closed_accounts,
-                slot,
-                "snapshot_accounts",
-                Arc::new(Mutex::new(0)),
-                "cleanup_snapshot_closed_accounts",
-                &config_clone,
-            )
-            .await;
-        });
+        // Closed accounts are not included in the updated accounts, so we need to clean them up
+        // separately. Keep this sequenced with the other cleanup statements to avoid deadlocks.
+        db_queries::cleanup_accounts(
+            &db,
+            updated_accounts.closed_accounts,
+            slot,
+            "snapshot_accounts",
+            Arc::new(Mutex::new(0)),
+            "cleanup_snapshot_closed_accounts",
+            config,
+        )
+        .await;
     }
-
-    join_set.join_all().await;
 
     metrics::record_finalize_slot(start_time.elapsed().as_secs_f64(), "total");
     metrics::record_new_accounts_in_slot(
