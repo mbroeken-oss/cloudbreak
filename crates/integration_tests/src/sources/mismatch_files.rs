@@ -61,4 +61,3 @@ pub fn load_requests(dir: &str, inject_context: bool) -> Result<watch::Receiver<
     let (_tx, rx) = watch::channel(requests);
     Ok(rx)
 }
-

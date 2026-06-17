@@ -3,6 +3,7 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::{EnvironmentInfo, IndexConfig};
 use futures::StreamExt;
 use sea_orm::DatabaseConnection;
 use std::{
@@ -27,7 +28,6 @@ use yellowstone_grpc_proto::{
     },
     tonic::codec::CompressionEncoding,
 };
-use cloudbreak_core::{EnvironmentInfo, IndexConfig};
 
 use crate::metrics;
 
@@ -47,7 +47,10 @@ async fn store_grpc_version(version_json: &str, db: &DatabaseConnection) {
                 tracing::error!("Failed to upsert grpc version: {:?}", e);
             }
         }
-        None => tracing::error!("Failed to parse grpc version from response: {}", version_json),
+        None => tracing::error!(
+            "Failed to parse grpc version from response: {}",
+            version_json
+        ),
     }
 }
 

@@ -508,8 +508,18 @@ pub fn print_compare_responses_result_with_retry(
     let d1 = original_comparison.duration1;
     let d2 = original_comparison.duration2;
 
-    let rpc1_info = format!("{} ({:.2}KB {}ms)", rpc1.name, orig_size1 as f64 / 1024.0, d1);
-    let rpc2_info = format!("{} ({:.2}KB {}ms)", rpc2.name, orig_size2 as f64 / 1024.0, d2);
+    let rpc1_info = format!(
+        "{} ({:.2}KB {}ms)",
+        rpc1.name,
+        orig_size1 as f64 / 1024.0,
+        d1
+    );
+    let rpc2_info = format!(
+        "{} ({:.2}KB {}ms)",
+        rpc2.name,
+        orig_size2 as f64 / 1024.0,
+        d2
+    );
 
     let original_matched = original_result.matches;
     let retry_matched = retry.compare_result.matches;
@@ -762,8 +772,8 @@ pub fn maybe_print_sample(
         "❌"
     };
 
-    let request_pretty = serde_json::to_string_pretty(request)
-        .unwrap_or_else(|_| request.to_string());
+    let request_pretty =
+        serde_json::to_string_pretty(request).unwrap_or_else(|_| request.to_string());
     let response1_pretty = serde_json::to_string_pretty(&response_comparison.response1)
         .unwrap_or_else(|_| response_comparison.response1.to_string());
     let response2_pretty = serde_json::to_string_pretty(&response_comparison.response2)

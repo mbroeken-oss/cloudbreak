@@ -38,7 +38,8 @@ pub trait QueryTrackerRpc {
     ) -> Result<(), jsonrpsee_types::ErrorObject<'static>>;
 
     #[method(name = "getStatus")]
-    async fn get_status(&self) -> Result<QueryTrackerStatus, jsonrpsee_types::ErrorObject<'static>>;
+    async fn get_status(&self)
+    -> Result<QueryTrackerStatus, jsonrpsee_types::ErrorObject<'static>>;
 
     #[method(name = "getQueueSize")]
     async fn get_queue_size(&self) -> Result<u32, jsonrpsee_types::ErrorObject<'static>>;

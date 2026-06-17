@@ -15,8 +15,8 @@
 //! a directive targeting `bench_compare::match` will override a less specific
 //! `bench_compare=info` from `RUST_LOG` for events whose target is exactly
 //! `bench_compare::match`.
-use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::Directive;
 
 use crate::config::PrintConfig;
 

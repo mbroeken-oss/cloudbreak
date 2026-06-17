@@ -33,8 +33,5 @@ async fn get_row_count(db: &DatabaseConnection, table: &str) -> i64 {
         ))
         .await
         .expect("Failed to get row count");
-    rows.first()
-        .unwrap()
-        .try_get::<i64>("", "count")
-        .unwrap()
+    rows.first().unwrap().try_get::<i64>("", "count").unwrap()
 }

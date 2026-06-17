@@ -4,6 +4,9 @@
  */
 
 use anyhow::Result;
+use cloudbreak_core::{HashCheckerConfig, IndexConfig, SnapshotConfigOnIndexer};
+use cloudbreak_snapshot::lt_hash::compute_filtered_snapshot_lt_hash;
+use cloudbreak_snapshot::sidecar::{self, AccountFileData, SnapshotType, download_snapshot_file};
 use sea_orm::DatabaseConnection;
 use std::{
     path::PathBuf,
@@ -14,11 +17,6 @@ use std::{
     time::Duration,
 };
 use yellowstone_grpc_proto::geyser::{SlotStatus, SubscribeUpdate, subscribe_update::UpdateOneof};
-use cloudbreak_core::{HashCheckerConfig, IndexConfig, SnapshotConfigOnIndexer};
-use cloudbreak_snapshot::lt_hash::compute_filtered_snapshot_lt_hash;
-use cloudbreak_snapshot::sidecar::{
-    self, AccountFileData, SnapshotType, download_snapshot_file,
-};
 
 use crate::indexer::IndexerState;
 use crate::modules::lt_hash::compute_db_lt_hash;
@@ -197,12 +195,16 @@ async fn run_orchestrator(state: HashCheckerState) -> Result<()> {
         full_path,
         &full_base_dir,
         snapshot_pair.full_snapshot.slot,
-    )?.account_files;
-    snapshot_files.extend(sidecar::unpack_compressed_snapshot(
-        inc_path,
-        &inc_base_dir,
-        incremental_snapshot_data.slot,
-    )?.account_files);
+    )?
+    .account_files;
+    snapshot_files.extend(
+        sidecar::unpack_compressed_snapshot(
+            inc_path,
+            &inc_base_dir,
+            incremental_snapshot_data.slot,
+        )?
+        .account_files,
+    );
 
     let slot = incremental_snapshot_data.slot;
 

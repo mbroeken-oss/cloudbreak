@@ -3,6 +3,8 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::IndexConfig;
+use cloudbreak_entity::accounts;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
     DatabaseConnection,
@@ -14,8 +16,6 @@ use tokio::{
 };
 use yellowstone_grpc_proto::geyser::CommitmentLevel;
 use yellowstone_grpc_proto::geyser::SubscribeUpdateBlock;
-use cloudbreak_core::IndexConfig;
-use cloudbreak_entity::accounts;
 
 use crate::indexer::{AccountsReceivedPerBlock, IndexerState};
 use crate::modules::snapshot::SnapshotProcessingState;

@@ -114,8 +114,7 @@ pub async fn check_differing_accounts(
 
     let response_slot = slot1.or(slot2);
 
-    let should_get_sigs =
-        db_check_config.get_last_signature && db_check_config.rpc_url.is_some();
+    let should_get_sigs = db_check_config.get_last_signature && db_check_config.rpc_url.is_some();
     let rpc_url = db_check_config.rpc_url.as_deref().unwrap_or("");
 
     for (pk, kind) in &diffs {
@@ -338,10 +337,7 @@ async fn get_missed_tx_slots(
 
     let latest_tx_slot = all_slots.iter().copied().max();
 
-    let mut missed_slots: Vec<u64> = all_slots
-        .into_iter()
-        .filter(|&s| s > after_slot)
-        .collect();
+    let mut missed_slots: Vec<u64> = all_slots.into_iter().filter(|&s| s > after_slot).collect();
 
     missed_slots.sort_unstable();
     missed_slots.dedup();

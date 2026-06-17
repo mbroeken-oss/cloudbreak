@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use cloudbreak_entity::slots;
 use rust_decimal::prelude::ToPrimitive;
 use sea_orm::EntityTrait;
 use sea_orm::sqlx::Row;
@@ -19,7 +20,6 @@ use solana_rpc_client_api::config::RpcAccountInfoConfig;
 use solana_rpc_client_api::response::{Response as RpcResponse, RpcResponseContext};
 use tokio::time::timeout;
 use tracing::Instrument;
-use cloudbreak_entity::slots;
 
 use crate::error::RpcError;
 use crate::http::CloudbreakRpcState;

@@ -3,6 +3,7 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::ApiConfig;
 use hyper::StatusCode;
 use prometheus::{
     HistogramOpts, HistogramVec, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
@@ -12,7 +13,6 @@ use std::{
     sync::{Arc, Mutex, Once},
 };
 use tracing::error;
-use cloudbreak_core::ApiConfig;
 
 use crate::http::server::HttpHandlerResponse;
 

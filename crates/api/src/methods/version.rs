@@ -7,10 +7,10 @@ use crate::{
     error::RpcError,
     http::{CloudbreakApiResponse, CloudbreakRpcState},
 };
+use cloudbreak_core::EnvironmentInfo;
 use serde::{Deserialize, Serialize};
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant};
-use cloudbreak_core::EnvironmentInfo;
 
 const CLOUDBREAK_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VERSION_CACHE_TTL: Duration = Duration::from_secs(600);

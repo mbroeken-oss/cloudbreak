@@ -5,6 +5,8 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use cloudbreak_core::{AccountSelectorConfig, DatabaseConfig, TryLoadConfig};
+use cloudbreak_snapshot::sidecar::{self, AccountFileData};
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, Statement};
 use serde::Deserialize;
 use solana_accounts_db::accounts_file::AccountsFile;
@@ -14,8 +16,6 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use cloudbreak_core::{AccountSelectorConfig, DatabaseConfig, TryLoadConfig};
-use cloudbreak_snapshot::sidecar::{self, AccountFileData};
 
 #[derive(Deserialize, Debug)]
 pub struct HashCheckConfig {
@@ -234,11 +234,9 @@ fn unpack_snapshots(
         );
         let inc_slot = slot_from_snapshot(inc)?;
         let inc_base_dir = sidecar::snapshot_base_dir(inc_slot);
-        all_files.extend(sidecar::unpack_compressed_snapshot(
-            inc_path,
-            &inc_base_dir,
-            inc_slot,
-        )?.account_files);
+        all_files.extend(
+            sidecar::unpack_compressed_snapshot(inc_path, &inc_base_dir, inc_slot)?.account_files,
+        );
     }
 
     Ok(all_files)

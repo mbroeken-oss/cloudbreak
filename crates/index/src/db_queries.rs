@@ -8,6 +8,8 @@ use std::{
     time::Duration,
 };
 
+use cloudbreak_core::{IndexConfig, modules::account_owner_map::AccountOwnerMap};
+use cloudbreak_entity::{accounts, service_health, slots};
 use sea_orm::{
     ActiveValue::{NotSet, Set},
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -20,8 +22,6 @@ use tokio::{
     time::{Instant, timeout},
 };
 use yellowstone_grpc_proto::{geyser::CommitmentLevel, prelude::UnixTimestamp};
-use cloudbreak_core::{IndexConfig, modules::account_owner_map::AccountOwnerMap};
-use cloudbreak_entity::{accounts, service_health, slots};
 
 use crate::metrics;
 

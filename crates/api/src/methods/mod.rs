@@ -3,10 +3,10 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::ProcessedCommitmentBehavior;
 use solana_commitment_config::CommitmentLevel;
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::filter::RpcFilterType;
-use cloudbreak_core::ProcessedCommitmentBehavior;
 
 use crate::error::RpcError;
 

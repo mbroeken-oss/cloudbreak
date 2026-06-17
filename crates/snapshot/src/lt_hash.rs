@@ -4,6 +4,7 @@
  */
 
 use anyhow::{Context, Result};
+use cloudbreak_core::AccountSelectorConfig;
 use solana_accounts_db::accounts_file::AccountsFile;
 use solana_lattice_hash::lt_hash::LtHash;
 use solana_pubkey::Pubkey;
@@ -11,7 +12,6 @@ use std::{
     collections::{HashMap, HashSet},
     path::Path,
 };
-use cloudbreak_core::AccountSelectorConfig;
 
 use crate::sidecar::AccountFileData;
 

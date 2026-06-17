@@ -3,11 +3,11 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
-pub use sea_orm_migration::prelude::*;
-use std::sync::OnceLock;
 pub use cloudbreak_core::{
     MigrationConfig, MigrationPgIndexesConfig, PgOwnerPartitionsConfig, TryLoadConfig,
 };
+pub use sea_orm_migration::prelude::*;
+use std::sync::OnceLock;
 
 mod m20220101_000001_create_slots_table;
 pub(crate) mod m20250414_201255_create_accounts_table;
@@ -150,10 +150,7 @@ fn columns_sql() -> &'static str {
             token_owner BYTEA GENERATED ALWAYS AS (SUBSTRING(data FROM 33 FOR 32)) STORED"#
 }
 
-fn list_partition_block(
-    table_name: &str,
-    programs: &[cloudbreak_core::PubkeyDef],
-) -> String {
+fn list_partition_block(table_name: &str, programs: &[cloudbreak_core::PubkeyDef]) -> String {
     programs
         .iter()
         .map(|program| {

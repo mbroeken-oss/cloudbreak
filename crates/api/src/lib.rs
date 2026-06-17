@@ -3,11 +3,11 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::{ApiConfig, EnvironmentInfo, TryLoadConfig};
 use futures::future;
 use sea_orm::{ConnectOptions, Database};
 use std::sync::Arc;
 use std::time::Duration;
-use cloudbreak_core::{ApiConfig, EnvironmentInfo, TryLoadConfig};
 
 use crate::{
     http::CloudbreakRpcState,

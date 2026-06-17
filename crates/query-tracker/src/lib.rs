@@ -3,11 +3,11 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::{QueryTrackerServiceConfig, TryLoadConfig};
 use jsonrpsee::server::{Server, ServerConfig};
 use sea_orm::{ConnectOptions, Database};
 use std::str::FromStr;
 use tracing::info;
-use cloudbreak_core::{QueryTrackerServiceConfig, TryLoadConfig};
 
 pub mod error;
 pub mod index_listener;

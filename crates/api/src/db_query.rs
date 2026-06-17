@@ -8,10 +8,10 @@ use crate::{
     methods::CloudbreakDbResult,
     slot_syncronizer::{SlotData, SlotSyncronizerData},
 };
-use sea_orm::{ConnectionTrait, DatabaseConnection, EntityTrait, QueryOrder, Statement};
-use solana_pubkey::Pubkey;
 use cloudbreak_core::QueryTrackerConfig;
 use cloudbreak_entity::{service_health, slots};
+use sea_orm::{ConnectionTrait, DatabaseConnection, EntityTrait, QueryOrder, Statement};
+use solana_pubkey::Pubkey;
 
 use opentelemetry::trace::TraceContextExt;
 use tracing_opentelemetry::OpenTelemetrySpanExt;

@@ -8,11 +8,11 @@ use crate::{
     http::{CloudbreakApiResponse, CloudbreakRpcState},
     methods::resolve_commitment,
 };
+use cloudbreak_entity::slots;
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use solana_commitment_config::{CommitmentConfig, CommitmentLevel};
 use tokio::time::Instant;
-use cloudbreak_entity::slots;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

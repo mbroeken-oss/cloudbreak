@@ -18,6 +18,7 @@ use crate::metrics::GpaMetricsData;
 use crate::modules::cache::{GpaProcessor, KeyedRpcAccount, MaybeJsonAccount};
 use crate::{db_query, metrics};
 use async_stream::try_stream;
+use cloudbreak_entity::slots;
 use futures::{Stream, StreamExt};
 use rust_decimal::prelude::ToPrimitive;
 use sea_orm::EntityTrait;
@@ -33,7 +34,6 @@ use solana_rpc_client_api::response::RpcKeyedAccount;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::time::{Instant, timeout};
 use tracing::Instrument;
-use cloudbreak_entity::slots;
 
 pub const MAX_BASE58_BYTES: usize = 128;
 

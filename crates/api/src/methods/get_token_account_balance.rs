@@ -3,6 +3,7 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_entity::slots;
 use sea_orm::EntityTrait;
 use sea_orm::sqlx::Row;
 use sea_orm::sqlx::{self};
@@ -13,7 +14,6 @@ use solana_pubkey::Pubkey;
 use solana_rpc_client_api::response::{Response as RpcResponse, RpcResponseContext};
 use tokio::time::timeout;
 use tracing::Instrument;
-use cloudbreak_entity::slots;
 
 use crate::error::RpcError;
 use crate::http::CloudbreakRpcState;

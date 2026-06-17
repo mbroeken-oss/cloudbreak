@@ -416,4 +416,3 @@ pub fn register_collectors() {
         register!(FINALIZE_SLOT_DELETED_ACCOUNTS);
     });
 }
-

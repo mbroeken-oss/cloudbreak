@@ -4,11 +4,11 @@
  */
 
 use crate::tracker;
+use cloudbreak_core::QueryTrackerConfig;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, Statement};
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::config::RpcProgramAccountsConfig;
 use tracing::{error, info, warn};
-use cloudbreak_core::QueryTrackerConfig;
 
 const COUNT_AUTO_INDEXES_SQL: &str = "SELECT COUNT(*) FROM pg_indexes \
     WHERE schemaname = 'public' \

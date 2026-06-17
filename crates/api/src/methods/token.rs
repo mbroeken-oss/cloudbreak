@@ -29,6 +29,7 @@ use solana_commitment_config::CommitmentLevel;
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 
+use cloudbreak_entity::slots;
 use solana_rpc_client_api::filter::RpcFilterType;
 use solana_rpc_client_api::response::{
     Response as RpcResponse, RpcKeyedAccount, RpcResponseContext,
@@ -42,7 +43,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, timeout};
 use tracing::Instrument;
-use cloudbreak_entity::slots;
 
 #[derive(Clone, Copy)]
 pub enum TokenQueryType {

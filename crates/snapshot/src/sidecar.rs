@@ -247,7 +247,8 @@ pub async fn get_snapshot_data(
                 .map(|incremental| incremental.slot)
                 .unwrap_or(snapshot_pair.full_snapshot.slot);
             highest_available_slot = Some(
-                highest_available_slot.map_or(pair_covered_slot, |slot| slot.max(pair_covered_slot)),
+                highest_available_slot
+                    .map_or(pair_covered_slot, |slot| slot.max(pair_covered_slot)),
             );
 
             let is_covered = if let Some(target_slot) = target_slot {
@@ -268,8 +269,8 @@ pub async fn get_snapshot_data(
             }
         }
 
-        let should_log = last_no_coverage_log
-            .is_none_or(|last| last.elapsed() >= NO_COVERAGE_LOG_INTERVAL);
+        let should_log =
+            last_no_coverage_log.is_none_or(|last| last.elapsed() >= NO_COVERAGE_LOG_INTERVAL);
         if should_log {
             tracing::warn!(
                 target: "get_snapshot_data",

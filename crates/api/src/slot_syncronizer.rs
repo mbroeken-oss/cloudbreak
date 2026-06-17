@@ -4,6 +4,7 @@
  */
 
 use crate::db_query;
+use cloudbreak_core::ApiConfig;
 use sea_orm::DatabaseConnection;
 use solana_commitment_config::CommitmentLevel;
 use std::{
@@ -11,7 +12,6 @@ use std::{
     time::Duration,
 };
 use tokio::{task::JoinHandle, time::Instant};
-use cloudbreak_core::ApiConfig;
 
 /// Data structure to store the confirmed and finalized slots from the slot data
 ///  syncronizer background task
