@@ -11,6 +11,7 @@ mod compare_accounts_by_mint_vs_cluster;
 mod compare_genesis_hash;
 mod compare_program_accounts;
 mod compare_version;
+mod compare_vote_accounts;
 mod config;
 mod db_check;
 mod get_slot;
@@ -33,6 +34,8 @@ enum Commands {
     Benchmark(config::BenchmarkArgs),
     /// Compare getProgramAccounts responses (legacy)
     Compare(compare_program_accounts::Args),
+    /// Compare getVoteAccounts activatedStake against an upstream RPC
+    CompareVoteAccounts(compare_vote_accounts::Args),
     /// Compare getTokenAccountsByMint (cloudbreak) against getProgramAccounts + mint memcmp (source of truth)
     CompareAccountsByMint(compare_accounts_by_mint::Args),
     /// Smoke-check getTokenAccountsByMint against a cluster RPC using getTokenLargestAccounts as oracle
@@ -54,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
     // before the subscriber is installed (see `logging::init_tracing`).
     match cli.command {
         Commands::Compare(args) => compare_program_accounts::run(&args).await?,
+        Commands::CompareVoteAccounts(args) => compare_vote_accounts::run(&args).await?,
         Commands::CompareAccountsByMint(args) => compare_accounts_by_mint::run(&args).await?,
         Commands::CompareAccountsByMintVsCluster(args) => {
             compare_accounts_by_mint_vs_cluster::run(&args).await?

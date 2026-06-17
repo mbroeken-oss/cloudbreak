@@ -23,11 +23,14 @@ use crate::{
     sidecar::{AccountFileData, SnapshotData, SnapshotType, download_snapshot_file},
 };
 
-mod accountsdb_helpers;
+pub mod accountsdb_helpers;
 mod db_queries;
 pub mod lt_hash;
 pub mod metrics;
 pub mod sidecar;
+pub mod stake_data;
+
+pub use db_queries::persist_epoch_stakes;
 
 const DB_ACCOUNTS_BATCH_SIZE: usize = 200;
 
@@ -152,8 +155,14 @@ async fn process_downloaded_snapshot(
 
     let base_dir = sidecar::snapshot_base_dir(snapshot_data.slot);
     let path = base_dir.join(&snapshot_data.file_name);
-    let solana_snapshot =
-        sidecar::unpack_compressed_snapshot(path, &base_dir, snapshot_data.slot)?;
+    let sidecar::UnpackedSnapshot {
+        account_files: solana_snapshot,
+        stake_data,
+    } = sidecar::unpack_compressed_snapshot(path, &base_dir, snapshot_data.slot)?;
+
+    if let Err(e) = db_queries::persist_epoch_stakes(database, &stake_data).await {
+        tracing::error!("Failed to persist epoch stakes from snapshot: {:?}", e);
+    }
     let mut account_file_workers: JoinSet<Result<()>> = JoinSet::new();
     let accounts_file_concurency = config.accounts_file_concurency.unwrap_or(32);
     let programs_include = config
@@ -422,7 +431,10 @@ pub async fn process_downloaded_snapshot_with_gap_filling(
     let start_time = Instant::now();
 
     let path = base_dir.join(&incremental_snapshot_file_name);
-    let solana_snapshot = sidecar::unpack_compressed_snapshot(path, &base_dir, snapshot_slot)?;
+    let sidecar::UnpackedSnapshot {
+        account_files: solana_snapshot,
+        stake_data: _,
+    } = sidecar::unpack_compressed_snapshot(path, &base_dir, snapshot_slot)?;
     let mut account_file_workers: JoinSet<Result<()>> = JoinSet::new();
     let accounts_file_concurency = config.accounts_file_concurency.unwrap_or(32);
     let programs_include = config

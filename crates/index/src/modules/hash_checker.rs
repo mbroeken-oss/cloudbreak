@@ -197,12 +197,12 @@ async fn run_orchestrator(state: HashCheckerState) -> Result<()> {
         full_path,
         &full_base_dir,
         snapshot_pair.full_snapshot.slot,
-    )?;
+    )?.account_files;
     snapshot_files.extend(sidecar::unpack_compressed_snapshot(
         inc_path,
         &inc_base_dir,
         incremental_snapshot_data.slot,
-    )?);
+    )?.account_files);
 
     let slot = incremental_snapshot_data.slot;
 

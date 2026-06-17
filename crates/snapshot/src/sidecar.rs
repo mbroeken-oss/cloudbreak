@@ -4,17 +4,18 @@
  */
 
 use bincode::Options;
+use cloudbreak_core::Result;
 use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tar::Archive;
 use tokio::time::{Instant, sleep};
 use tokio::{fs::File, io::AsyncWriteExt};
-use cloudbreak_core::Result;
 use zstd::Decoder;
 
 use crate::accountsdb_helpers::{
-    AccountsDbFields, DeserializableVersionedBank, MAX_STREAM_SIZE, SerializableAccountStorageEntry,
+    AccountsDbFields, DeserializableVersionedBank, ExtraFields, MAX_STREAM_SIZE,
+    SerializableAccountStorageEntry,
 };
 
 #[derive(Debug, Clone)]
@@ -373,11 +374,16 @@ pub async fn download_snapshot_file(
     Ok(())
 }
 
+pub struct UnpackedSnapshot {
+    pub account_files: Vec<AccountFileData>,
+    pub stake_data: crate::stake_data::SnapshotStakeData,
+}
+
 pub fn unpack_compressed_snapshot<P: Into<PathBuf>>(
     path: P,
     base_dir: &Path,
     slot: u64,
-) -> Result<Vec<AccountFileData>> {
+) -> Result<UnpackedSnapshot> {
     let start_time = Instant::now();
     let path_buf: PathBuf = path.into();
 
@@ -421,6 +427,22 @@ pub fn unpack_compressed_snapshot<P: Into<PathBuf>>(
 
     let elapsed = start_time.elapsed().as_secs_f64() - elapsed;
     tracing::info!(target: "unpack_compressed_snapshot", "Deserialized AccountsDbFields Vec in {} seconds", elapsed);
+
+    let extra_fields: ExtraFields = bincode::options()
+        .with_limit(MAX_STREAM_SIZE)
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .deserialize_from(&mut snapshot_stream)?;
+
+    let stake_data =
+        crate::stake_data::extract_stake_data(&bank_fields, &extra_fields.versioned_epoch_stakes);
+    tracing::info!(
+        target: "unpack_compressed_snapshot",
+        "Extracted stake data: epoch={}, voters={}, in_epoch_set={}",
+        stake_data.epoch,
+        stake_data.voters.len(),
+        stake_data.voters.iter().filter(|v| v.in_epoch_set).count(),
+    );
 
     let AccountsDbFields(accounts_metadata, _, accountsdb_fields_slot, ..) = accounts_db_fields;
 
@@ -497,7 +519,10 @@ pub fn unpack_compressed_snapshot<P: Into<PathBuf>>(
     let elapsed = start_time.elapsed().as_secs_f64();
     tracing::info!(target: "unpack_compressed_snapshot", "Total unpacking time: {} seconds", elapsed);
 
-    Ok(account_file_data)
+    Ok(UnpackedSnapshot {
+        account_files: account_file_data,
+        stake_data,
+    })
 }
 
 pub struct AccountFileData {

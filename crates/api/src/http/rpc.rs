@@ -154,6 +154,12 @@ async fn process_single_request(
 
             json_serialize_response(id, hash).await
         }
+        "getVoteAccounts" => {
+            let config: Option<methods::vote_accounts::GetVoteAccountsConfig> =
+                extract_param(&rpc_request.params, 0).ok().flatten();
+            let result = methods::vote_accounts::get_vote_accounts(state, config).await;
+            json_serialize_response(id, result).await
+        }
         "getAccountInfo" => {
             let start_time = Instant::now();
 

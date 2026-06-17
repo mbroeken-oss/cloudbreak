@@ -6,6 +6,7 @@
 use crate::http::server::HttpHandlerResponse;
 use crate::http::server::ResponseBody;
 use crate::modules::cache::GpaProcessor;
+use crate::modules::vote_accounts_cache::SharedStakesSnapshot;
 use crate::query_tracker_client::QueryTrackerClient;
 use crate::slot_syncronizer::SlotSyncronizerData;
 use hyper::StatusCode;
@@ -34,6 +35,8 @@ pub struct CloudbreakRpcState {
     pub processed_commitment: ProcessedCommitmentBehavior,
     pub gpa_processor: GpaProcessor,
     pub genesis_hash: String,
+    pub vote_accounts_supported: bool,
+    pub stakes_cache: SharedStakesSnapshot,
     pub max_multiple_accounts: usize,
 }
 
@@ -51,6 +54,8 @@ impl CloudbreakRpcState {
         processed_commitment: ProcessedCommitmentBehavior,
         gpa_processor: GpaProcessor,
         genesis_hash: String,
+        vote_accounts_supported: bool,
+        stakes_cache: SharedStakesSnapshot,
         max_multiple_accounts: usize,
     ) -> Self {
         Self {
@@ -65,6 +70,8 @@ impl CloudbreakRpcState {
             processed_commitment,
             gpa_processor,
             genesis_hash,
+            vote_accounts_supported,
+            stakes_cache,
             max_multiple_accounts,
         }
     }

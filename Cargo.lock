@@ -1463,6 +1463,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-pubkey 4.0.0",
  "solana-rpc-client-api",
+ "solana-vote-interface",
  "spl-token-2022",
  "spl-token-2022-interface",
  "spl-token-interface",
@@ -1533,6 +1534,7 @@ name = "cloudbreak-index"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "clap",
  "cloudbreak-api",
  "cloudbreak-core",
@@ -1554,6 +1556,8 @@ dependencies = [
  "solana-lattice-hash",
  "solana-program",
  "solana-pubkey 4.0.0",
+ "solana-stake-interface",
+ "solana-vote-interface",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

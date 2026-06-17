@@ -55,8 +55,38 @@ pub struct DeserializableVersionedBank {
     pub stakes: solana_runtime::stakes::Stakes<solana_stake_interface::state::Delegation>,
     #[allow(dead_code)]
     pub unused_accounts: UnusedAccounts,
-    pub epoch_stakes: HashMap<Epoch, solana_runtime::epoch_stakes::VersionedEpochStakes>,
+    pub unused_epoch_stakes: HashMap<Epoch, ()>,
     pub is_delta: bool,
+}
+
+/// Obsolete (always `None`) — mirror of solana-runtime's
+/// `serde_snapshot::ObsoleteIncrementalSnapshotPersistence`, present only so the
+/// extra-fields stream deserializes at the correct offsets.
+#[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct ObsoleteIncrementalSnapshotPersistence {
+    pub full_slot: u64,
+    pub full_hash: [u8; 32],
+    pub full_capitalization: u64,
+    pub incremental_hash: [u8; 32],
+    pub incremental_capitalization: u64,
+}
+
+/// Mirror of solana-runtime's `serde_snapshot::ExtraFieldsToDeserialize`.
+/// Serialized at the END of the snapshot manifest, AFTER the bank struct and
+/// `AccountsDbFields`. This is where the real `versioned_epoch_stakes` live
+/// (the source for `epochVoteAccount`)
+#[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct ExtraFields {
+    #[serde(deserialize_with = "default_on_eof")]
+    pub lamports_per_signature: u64,
+    #[serde(deserialize_with = "default_on_eof")]
+    pub obsolete_incremental_snapshot_persistence: Option<ObsoleteIncrementalSnapshotPersistence>,
+    #[serde(deserialize_with = "default_on_eof")]
+    pub obsolete_epoch_accounts_hash: Option<[u8; 32]>,
+    #[serde(deserialize_with = "default_on_eof")]
+    pub versioned_epoch_stakes: HashMap<u64, solana_runtime::epoch_stakes::VersionedEpochStakes>,
 }
 
 #[derive(Default, Clone, PartialEq, Eq, Debug, Deserialize)]

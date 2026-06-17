@@ -20,6 +20,7 @@ use cloudbreak_core::SnapshotPgIndexesConfig;
 use cloudbreak_entity::snapshot_accounts::{self};
 
 use crate::metrics;
+use crate::stake_data::SnapshotStakeData;
 
 pub const INSERT_SNAPSHOT_ACCOUNT_VERSIONS_TEMP_TABLE_BATCH_SIZE: usize = 1_000;
 
@@ -470,3 +471,86 @@ async fn get_snapshot_accounts_partition_sizes(
 
     Ok(partition_sizes)
 }
+
+/// Upsert the per-voter stake rows extracted from a snapshot bank into the
+/// `epoch_stakes` table and prune epochs older than (current - 2). The latest
+/// epoch is read by the API on startup and via a poll loop.
+pub async fn persist_epoch_stakes(
+    db: &DatabaseConnection,
+    data: &SnapshotStakeData,
+) -> Result<(), anyhow::Error> {
+    if data.voters.is_empty() {
+        tracing::warn!(
+            target: "persist_epoch_stakes",
+            "snapshot stake data for epoch {} is empty; skipping",
+            data.epoch
+        );
+        return Ok(());
+    }
+
+    let start_time = Instant::now();
+    let txn = db.begin().await?;
+
+    // Build a multi-row VALUES clause. Each row has 5 placeholders:
+    // (epoch, vote_pubkey, node_pubkey, activated_stake, in_epoch_set).
+    let mut values_sql = String::new();
+    let mut params: Vec<Value> = Vec::with_capacity(data.voters.len() * 5);
+    for (idx, row) in data.voters.iter().enumerate() {
+        if idx > 0 {
+            values_sql.push_str(", ");
+        }
+        let base = idx * 5;
+        values_sql.push_str(&format!(
+            "(${}::BIGINT, ${}::BYTEA, ${}::BYTEA, ${}::BIGINT, ${}::BOOLEAN)",
+            base + 1,
+            base + 2,
+            base + 3,
+            base + 4,
+            base + 5,
+        ));
+        params.push(Value::from(data.epoch as i64));
+        params.push(Value::from(row.vote_pubkey.to_bytes().to_vec()));
+        params.push(Value::from(row.node_pubkey.to_bytes().to_vec()));
+        params.push(Value::from(row.activated_stake as i64));
+        params.push(Value::from(row.in_epoch_set));
+    }
+
+    let upsert_sql = format!(
+        "INSERT INTO epoch_stakes \
+            (epoch, vote_pubkey, node_pubkey, activated_stake, in_epoch_set) \
+         VALUES {values_sql} \
+         ON CONFLICT (epoch, vote_pubkey) DO UPDATE SET \
+            node_pubkey     = EXCLUDED.node_pubkey, \
+            activated_stake = EXCLUDED.activated_stake, \
+            in_epoch_set    = EXCLUDED.in_epoch_set, \
+            updated_at      = now()"
+    );
+
+    txn.execute(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        &upsert_sql,
+        params,
+    ))
+    .await?;
+
+    // Prune older epochs — keep current and current-1 only.
+    txn.execute(Statement::from_sql_and_values(
+        sea_orm::DatabaseBackend::Postgres,
+        "DELETE FROM epoch_stakes WHERE epoch < $1",
+        [Value::from((data.epoch.saturating_sub(1)) as i64)],
+    ))
+    .await?;
+
+    txn.commit().await?;
+
+    tracing::info!(
+        target: "persist_epoch_stakes",
+        "persisted {} voters for epoch {} in {:.3}s",
+        data.voters.len(),
+        data.epoch,
+        start_time.elapsed().as_secs_f64()
+    );
+
+    Ok(())
+}
+

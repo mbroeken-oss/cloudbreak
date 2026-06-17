@@ -157,6 +157,9 @@ pub async fn run(config: &str) -> CloudbreakResult<()> {
         .ok()
         .expect("Failed to set finalizer for debug endpoint");
 
+    let _epoch_stakes_handle =
+        modules::epoch_stakes::spawn_epoch_stakes_recomputer(db.clone(), config.clone());
+
     tokio::select! {
         _ = main_loop(
             buffer_channel_rx,

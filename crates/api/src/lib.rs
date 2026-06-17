@@ -10,9 +10,12 @@ use std::time::Duration;
 use cloudbreak_core::{ApiConfig, EnvironmentInfo, TryLoadConfig};
 
 use crate::{
-    http::CloudbreakRpcState, metrics::setup_metrics, modules::cache::GpaProcessor,
+    http::CloudbreakRpcState,
+    metrics::setup_metrics,
+    modules::{cache::GpaProcessor, vote_accounts_cache},
     query_tracker_client::QueryTrackerClient,
 };
+use std::sync::RwLock;
 use tracing::info;
 
 pub mod db_query;
@@ -82,6 +85,39 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
     // Setup optional module cache
     let gpa_processor = GpaProcessor::new(config.gpa_cache.clone());
 
+    let vote_accounts_supported = indexer_filter.supports_vote_accounts();
+    let stakes_cache: vote_accounts_cache::SharedStakesSnapshot = Arc::new(RwLock::new(Arc::new(
+        vote_accounts_cache::StakesSnapshot::empty(),
+    )));
+    if vote_accounts_supported {
+        match vote_accounts_cache::load_latest_stakes(&database).await {
+            Ok(Some(snapshot)) => {
+                info!(
+                    "Loaded initial stakes snapshot: epoch {} ({} voters)",
+                    snapshot.epoch,
+                    snapshot.voters.len()
+                );
+                *stakes_cache.write().unwrap() = Arc::new(snapshot);
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    "epoch_stakes table is empty at startup; getVoteAccounts will fail until \
+                     the indexer processes a snapshot"
+                );
+            }
+            Err(e) => {
+                tracing::error!("Failed to load initial stakes snapshot: {:?}", e);
+            }
+        }
+        vote_accounts_cache::spawn_poll_task(database.clone(), stakes_cache.clone());
+        info!("getVoteAccounts: supported=true (Vote+Stake programs are indexed)");
+    } else {
+        info!(
+            "getVoteAccounts: supported=false (Vote and/or Stake programs are not in the \
+             indexer's filter set)"
+        );
+    }
+
     let state = CloudbreakRpcState::new(
         database,
         queries_timeout,
@@ -94,6 +130,8 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
         config.processed_commitment,
         gpa_processor,
         config.genesis_hash.clone(),
+        vote_accounts_supported,
+        stakes_cache,
         max_multiple_accounts,
     );
 

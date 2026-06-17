@@ -4,3 +4,4 @@
  */
 
 pub mod cache;
+pub mod vote_accounts_cache;

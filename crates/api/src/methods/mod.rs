@@ -21,6 +21,7 @@ pub mod program;
 pub mod slot;
 pub mod token;
 pub mod version;
+pub mod vote_accounts;
 
 /// Resolves the requested commitment level according to the API readed config
 /// on `processed-commitment`. `Confirmed` and `Finalized` pass through
