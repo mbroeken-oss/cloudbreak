@@ -130,6 +130,17 @@ pub async fn create_database_indexes(
         )
         .await?;
         tracing::info!(target: "create_database_indexes", "created idx_snapshot_accounts_token_mint in {} seconds (total accumulated)", start_time.elapsed().as_secs_f64());
+
+        db.execute_unprepared(
+            r#"
+                CREATE INDEX idx_snapshot_accounts_token_mint_latest
+                ON snapshot_accounts (token_mint, slot DESC, pubkey)
+                WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
+                OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
+            "#
+        )
+        .await?;
+        tracing::info!(target: "create_database_indexes", "created idx_snapshot_accounts_token_mint_latest in {} seconds (total accumulated)", start_time.elapsed().as_secs_f64());
     }
 
     if cfg.idx_snapshot_accounts_token_owner {
@@ -143,6 +154,17 @@ pub async fn create_database_indexes(
         )
         .await?;
         tracing::info!(target: "create_database_indexes", "created idx_snapshot_accounts_token_owner in {} seconds (total accumulated)", start_time.elapsed().as_secs_f64());
+
+        db.execute_unprepared(
+            r#"
+                CREATE INDEX idx_snapshot_accounts_token_owner_latest
+                ON snapshot_accounts (token_owner, slot DESC, pubkey)
+                WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
+                OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
+            "#
+        )
+        .await?;
+        tracing::info!(target: "create_database_indexes", "created idx_snapshot_accounts_token_owner_latest in {} seconds (total accumulated)", start_time.elapsed().as_secs_f64());
     }
 
     if cfg.idx_snapshot_accounts_pubkey_slot {

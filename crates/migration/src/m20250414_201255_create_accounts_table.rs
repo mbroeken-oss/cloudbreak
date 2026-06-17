@@ -54,6 +54,17 @@ impl MigrationTrait for Migration {
                         .to_owned(),
                 )
                 .await?;
+
+            connection
+                .execute_unprepared(
+                    r#"
+                    CREATE INDEX idx_accounts_token_mint_latest
+                    ON accounts (token_mint, slot DESC, pubkey)
+                    WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
+                    OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
+                    "#,
+                )
+                .await?;
         }
 
         if indexes.idx_accounts_token_owner {
@@ -69,6 +80,17 @@ impl MigrationTrait for Migration {
                                 .add(Expr::col(Account::Owner).eq(TOKEN_EXTENSIONS_ID.as_ref())),
                         )
                         .to_owned(),
+                )
+                .await?;
+
+            connection
+                .execute_unprepared(
+                    r#"
+                    CREATE INDEX idx_accounts_token_owner_latest
+                    ON accounts (token_owner, slot DESC, pubkey)
+                    WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
+                    OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
+                    "#,
                 )
                 .await?;
         }
@@ -142,7 +164,23 @@ impl MigrationTrait for Migration {
         manager
             .drop_index(
                 Index::drop()
+                    .name("idx_accounts_token_mint_latest")
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_index(
+                Index::drop()
                     .name("idx_accounts_token_owner")
+                    .if_exists()
+                    .to_owned(),
+            )
+            .await?;
+        manager
+            .drop_index(
+                Index::drop()
+                    .name("idx_accounts_token_owner_latest")
                     .if_exists()
                     .to_owned(),
             )
