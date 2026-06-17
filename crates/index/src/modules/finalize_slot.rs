@@ -5,7 +5,7 @@
 
 use cloudbreak_core::IndexConfig;
 use sea_orm::DatabaseConnection;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, hash_map::Entry};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -137,23 +137,29 @@ impl SlotFinalizer {
         parent_blockhash: String,
     ) {
         let mut inner = self.inner.lock().expect("Failed to lock finalizer");
-        let already_present = inner
-            .blocks
-            .insert(
-                slot,
-                BlockEntry {
-                    accounts,
-                    blockhash,
-                    parent_slot,
-                    parent_blockhash,
-                },
-            )
-            .is_some();
+        let new_has_chain_data = !blockhash.is_empty();
+        let new_entry = BlockEntry {
+            accounts,
+            blockhash,
+            parent_slot,
+            parent_blockhash,
+        };
+        match inner.blocks.entry(slot) {
+            Entry::Vacant(entry) => {
+                entry.insert(new_entry);
+            }
+            Entry::Occupied(mut entry) => {
+                let existing_has_chain_data = !entry.get().blockhash.is_empty();
+                if new_has_chain_data && !existing_has_chain_data {
+                    entry.insert(new_entry);
+                    tracing::debug!("Replaced repaired block data for slot {}", slot);
+                } else {
+                    tracing::debug!("Ignoring duplicate block data for slot {}", slot);
+                }
+            }
+        }
         let len = inner.blocks.len();
 
-        if already_present {
-            tracing::error!("Block data for slot {} already existed in the map", slot);
-        }
         if len > BLOCKS_MAP_WARN_THRESHOLD {
             let now = Instant::now();
             let should_warn = inner

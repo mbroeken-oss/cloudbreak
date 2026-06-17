@@ -10,10 +10,7 @@ use sea_orm::{
     DatabaseConnection,
 };
 use solana_pubkey::Pubkey;
-use tokio::{
-    task::{JoinHandle, JoinSet},
-    time::Instant,
-};
+use tokio::{task::JoinHandle, time::Instant};
 use yellowstone_grpc_proto::geyser::CommitmentLevel;
 use yellowstone_grpc_proto::geyser::SubscribeUpdateBlock;
 
@@ -206,20 +203,12 @@ pub async fn save_block(
     metrics::record_closed_accounts_per_slot(closed_account_for_slot_len);
     metrics::record_block_size(block_bytes_data);
 
-    // Update the "accounts" table
-    let mut tasks = JoinSet::new();
+    // Update the accounts table in-order to avoid partition-level upsert deadlocks while the
+    // live stream and self-healing path can both deliver reordered account versions.
     for (chunk, byte_size) in chunks {
-        let db = db.clone();
-        let config_clone = config.clone();
-        // TODO: Set concurrency limit
-        tasks.spawn(async move {
-            let _guard = metrics::TokioTaskCounterGuard::new("insert_accounts_chunk");
-
-            db_queries::insert_accounts_chunk(&db, chunk, byte_size, &config_clone).await;
-        });
+        let _guard = metrics::TokioTaskCounterGuard::new("insert_accounts_chunk");
+        db_queries::insert_accounts_chunk(db, chunk, byte_size, &config).await;
     }
-
-    tasks.join_all().await;
 
     if let Some(handle) = closed_accounts_insert_handle
         && let Err(e) = handle.await

@@ -4,6 +4,7 @@
  */
 
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -409,10 +410,29 @@ pub async fn insert_accounts_chunk(
 
     let start_time = Instant::now();
     let chunk_len = chunk.len();
+    let chunk = deduplicate_accounts_chunk(chunk);
 
     let result = timeout(
         query_timeout,
-        accounts::Entity::insert_many(chunk).exec_without_returning(db),
+        accounts::Entity::insert_many(chunk)
+            .on_conflict(
+                OnConflict::columns([
+                    accounts::Column::Owner,
+                    accounts::Column::Pubkey,
+                    accounts::Column::Slot,
+                ])
+                .update_columns([
+                    accounts::Column::Lamports,
+                    accounts::Column::Executable,
+                    accounts::Column::RentEpoch,
+                    accounts::Column::Data,
+                    accounts::Column::WriteVersion,
+                    accounts::Column::UpdatedOn,
+                    accounts::Column::TxnSignature,
+                ])
+                .to_owned(),
+            )
+            .exec_without_returning(db),
     )
     .await
     .unwrap_or_else(|elapsed| {
@@ -434,4 +454,42 @@ pub async fn insert_accounts_chunk(
         tracing::debug!(target: "slow_chunk", "slow chunk: len: {}, size: {}", chunk_len, byte_size);
     }
     metrics::record_chunk_processing(elapsed, "block");
+}
+
+fn deduplicate_accounts_chunk(chunk: Vec<accounts::ActiveModel>) -> Vec<accounts::ActiveModel> {
+    let mut deduped: HashMap<(Vec<u8>, Vec<u8>, i64), accounts::ActiveModel> =
+        HashMap::with_capacity(chunk.len());
+    let mut passthrough = Vec::new();
+
+    for account in chunk {
+        let key = match (&account.owner, &account.pubkey, &account.slot) {
+            (Set(owner), Set(pubkey), Set(slot)) => (owner.clone(), pubkey.clone(), *slot),
+            _ => {
+                passthrough.push(account);
+                continue;
+            }
+        };
+
+        match deduped.get_mut(&key) {
+            Some(existing) if account_write_version(&account) < account_write_version(existing) => {
+            }
+            Some(existing) => {
+                *existing = account;
+            }
+            None => {
+                deduped.insert(key, account);
+            }
+        }
+    }
+
+    let mut chunk: Vec<_> = deduped.into_values().collect();
+    chunk.extend(passthrough);
+    chunk
+}
+
+fn account_write_version(account: &accounts::ActiveModel) -> i64 {
+    match &account.write_version {
+        Set(write_version) => *write_version,
+        _ => i64::MIN,
+    }
 }
