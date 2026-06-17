@@ -142,7 +142,7 @@ pub fn track_program_accounts_query(
                             }
                         }
 
-                        if !found && *count == threshold {
+                        if !found {
                             temp_vec.push(PrioritizedQuery {
                                 count: *count,
                                 key: key_for_queue,
