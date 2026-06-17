@@ -3,8 +3,11 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::{IndexConfig, SnapshotConfig};
+use cloudbreak_snapshot::sidecar::SnapshotType;
 use sea_orm::DatabaseConnection;
 use std::{
+    collections::HashSet,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -16,8 +19,6 @@ use tokio::{
     task::JoinHandle,
 };
 use yellowstone_grpc_proto::{geyser::SubscribeUpdateBlock, prelude::UnixTimestamp};
-use cloudbreak_core::{IndexConfig, SnapshotConfig};
-use cloudbreak_snapshot::sidecar::SnapshotType;
 
 use crate::{
     db_queries,
@@ -28,6 +29,11 @@ use crate::{
         snapshot::SnapshotProcessingState,
     },
 };
+
+// Yellowstone confirmed block updates can arrive out of order under load. Keep
+// newly observed slot gaps pending long enough for late block updates to land
+// before we promote them to confirmed gaps and mark service health unhealthy.
+const GAP_CONFIRMATION_REORDER_TOLERANCE_SLOTS: u64 = 1024;
 
 #[derive(Clone, Default, Debug)]
 pub struct SlotGap {
@@ -92,12 +98,12 @@ impl SelfHealingState {
     fn remove_slot_from_gaps_list(&self, slot: u64) {
         let mut gaps_list = self.gaps_list.lock().expect("Failed to lock gaps_list");
         gaps_list.retain(|s| {
-            let is_slot_match = s.slot != slot;
-            if is_slot_match && !s.is_confirmed {
+            let keep_slot = s.slot != slot;
+            if !keep_slot && !s.is_confirmed {
                 tracing::warn!("Slot {} is not confirmed, removing from gaps list", slot);
             }
 
-            is_slot_match
+            keep_slot
         });
     }
 
@@ -170,6 +176,10 @@ impl SelfHealingState {
         let gaps_to_confirm_values = self.get_gaps_to_confirm();
         let rpc_url = self.rpc_url.clone();
         let gaps_to_confirm = self.gaps_to_confirm.clone();
+        let last_slot_received = *self
+            .last_slot_received
+            .lock()
+            .expect("Failed to lock last_slot_received");
 
         tokio::spawn(async move {
             let _guard = metrics::TokioTaskCounterGuard::new("self_healing");
@@ -178,7 +188,26 @@ impl SelfHealingState {
             let mut valid_blocks_on_the_gaps = Vec::new();
 
             for gap in gaps_to_confirm_values {
+                if last_slot_received.saturating_sub(gap.end_slot)
+                    < GAP_CONFIRMATION_REORDER_TOLERANCE_SLOTS
+                {
+                    tracing::debug!(
+                        target: "self_healing",
+                        "Delaying slot gap confirmation for reorder tolerance: start_slot: {} - end_slot: {} - last_slot_received: {}",
+                        gap.start_slot,
+                        gap.end_slot,
+                        last_slot_received
+                    );
+                    continue;
+                }
+
                 let gap_len = (gap.end_slot - gap.start_slot + 1) as usize;
+                let pending_gap_slots = gaps_list
+                    .lock()
+                    .expect("Failed to lock gaps_list")
+                    .iter()
+                    .map(|slot| slot.slot)
+                    .collect::<HashSet<_>>();
 
                 let result = client.get_blocks_with_limit(gap.start_slot, gap_len).await;
 
@@ -198,6 +227,10 @@ impl SelfHealingState {
                         }
 
                         for gap_slot in (gap.start_slot + 1)..gap.end_slot {
+                            if !pending_gap_slots.contains(&gap_slot) {
+                                continue;
+                            }
+
                             // Ensure that we only count slots that belong to valid blocks
                             if blocks.contains(&gap_slot) {
                                 valid_blocks_on_the_gaps.push(gap_slot);
@@ -271,9 +304,6 @@ impl SelfHealingState {
                 // TODO: Make the gap filling interval configurable
                 tokio::time::sleep(Duration::from_secs(30)).await;
 
-                self.confirm_gaps(db.clone()).await;
-
-                let mut confirmed_gaps_list = self.get_confirmed_gaps_list();
                 let is_startup_finished = {
                     *indexer_state
                         .snapshot_processing_state
@@ -281,6 +311,17 @@ impl SelfHealingState {
                         .expect("Failed to lock snapshot_processing_state")
                         == SnapshotProcessingState::FinishedAndCleanedUp
                 };
+
+                if is_startup_finished {
+                    self.confirm_gaps(db.clone()).await;
+                } else {
+                    tracing::debug!(
+                        target: "self_healing",
+                        "Skipping slot gap confirmation while snapshot startup is still in progress"
+                    );
+                }
+
+                let mut confirmed_gaps_list = self.get_confirmed_gaps_list();
                 if confirmed_gaps_list.is_empty() {
                     let gaps_list_empty = self
                         .gaps_list
@@ -355,7 +396,10 @@ impl SelfHealingState {
 
                 handle.await??;
 
-                // Finalize the slots that were repaired and remove them from the gaps list
+                let repaired_slot_set = repaired_slots.iter().copied().collect::<HashSet<_>>();
+
+                // Finalize the slots that produced relevant account updates and remove them from
+                // the gaps list.
                 for slot in repaired_slots {
                     let updated_accounts = indexer_state
                         .updated_accounts_map
@@ -381,12 +425,45 @@ impl SelfHealingState {
                     self.remove_slot_from_gaps_list(slot);
                 }
 
+                // Some confirmed slots can be real blocks but contain no account updates relevant
+                // to the configured program filter. In that case the snapshot processor has
+                // successfully proven there is nothing for Cloudbreak to persist, so the gap must
+                // still be cleared instead of being retried forever.
+                for slot in confirmed_gaps_list
+                    .iter()
+                    .copied()
+                    .filter(|slot| !repaired_slot_set.contains(slot))
+                {
+                    tracing::info!(
+                        "Clearing gap slot with no relevant account updates after snapshot fill: {}",
+                        slot
+                    );
+                    self.remove_slot_from_gaps_list(slot);
+                }
+
                 let elapsed = start_time.elapsed().as_secs_f64();
                 tracing::info!(
                     "Finished filling gaps: {:?} - in {} seconds",
                     confirmed_gaps_list,
                     elapsed
                 );
+
+                let gaps_list_empty = self
+                    .gaps_list
+                    .lock()
+                    .expect("Failed to lock gaps_list")
+                    .is_empty();
+                if gaps_list_empty {
+                    *indexer_state
+                        .pending_gap_fill_replays
+                        .gap_fill_active
+                        .lock()
+                        .expect("Failed to lock gap_fill_active") = false;
+                }
+
+                if self.get_confirmed_gaps_list().is_empty() {
+                    db_queries::update_service_health(&db, true).await;
+                }
 
                 let buffered = std::mem::take(
                     &mut *indexer_state
