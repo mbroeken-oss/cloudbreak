@@ -198,7 +198,7 @@ pub async fn gpa_streaming_response_body(
 
         json_span.record("accounts", accounts_count as i64);
         json_span.record("wall_time", json_encode_ms.as_millis() as i64);
-        json_span.record("json_bytes", json_bytes);
+        json_span.record("json_bytes", json_bytes as i64);
         json_span.record("total_wall_time", gpa_global_start_time.elapsed().as_millis() as i64);
 
         // Commit the accumulated `(pubkey, bytes)` pairs as the new cached query

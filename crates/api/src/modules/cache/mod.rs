@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::RwLock;
+use tokio::time::Instant;
 
 use crate::error::RpcError;
 use crate::methods::program;
@@ -209,6 +210,7 @@ impl GpaProcessor {
     /// it will trigger the cache cleanup of oldest queries to ensure the cache
     /// size stays within the configured limit .
     pub fn finalize_query(&mut self) {
+        let start_time = Instant::now();
         let Self::Cached {
             cache,
             normalized_query,
@@ -220,6 +222,14 @@ impl GpaProcessor {
         else {
             return;
         };
+
+        let finalize_query_span = tracing::info_span!(
+            "gpa_cache_finalize_query",
+            cache_hits = tracing::field::Empty,
+            query_bytes = tracing::field::Empty,
+            query_accounts = tracing::field::Empty,
+            wall_time = tracing::field::Empty,
+        );
 
         let Some(normalized_query) = normalized_query.take() else {
             tracing::error!(target: "gpa_cache", "No normalized query found");
@@ -248,6 +258,10 @@ impl GpaProcessor {
             size: query_bytes,
             cache_hits: *cache_hits,
         };
+
+        finalize_query_span.record("query_bytes", query_bytes as i64);
+        finalize_query_span.record("cache_hits", *cache_hits as i64);
+        finalize_query_span.record("query_accounts", new_accounts_for_query_len as i64);
 
         let mut cache_guard = cache.write().expect("can't lock gpa cache rwlock");
 
@@ -278,13 +292,7 @@ impl GpaProcessor {
 
         cache_guard.insert_query_for_slot(normalized_query.clone(), *new_slot, older_query);
 
-        // Metrics
-        tracing::info_span!(
-            "gpa_cache_finalize_query",
-            cache_hits = *cache_hits,
-            query_bytes = query_bytes,
-            query_accounts = new_accounts_for_query_len,
-        );
+        finalize_query_span.record("wall_time", start_time.elapsed().as_millis() as i64);
     }
 }
 
