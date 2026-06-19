@@ -39,6 +39,10 @@ pub struct GpaCache {
     pub config: GpaCacheConfig,
     /// Size of the cache in bytes
     pub size: u64,
+    /// Size in bytes of the currently pinned (non-evictable) queries, i.e. those
+    /// larger than `config.max_bytes_query_cleanup`. Tracked incrementally so we
+    /// can cap how much space pinned queries are allowed to collectively hold.
+    pub pinned_size: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -290,6 +294,17 @@ impl GpaProcessor {
             cache_guard.size = cache_guard.size.saturating_sub(older_query.size);
         }
 
+        // Mirror the same accounting for pinned bytes: credit the new query if
+        // it is pinned, and credit back the replaced query if it was pinned.
+        if cache_guard.is_pinned_size(query_bytes) {
+            cache_guard.pinned_size += query_bytes;
+        }
+        if let Some(older_query) = &older_query
+            && cache_guard.is_pinned_size(older_query.size)
+        {
+            cache_guard.pinned_size = cache_guard.pinned_size.saturating_sub(older_query.size);
+        }
+
         cache_guard.insert_query_for_slot(normalized_query.clone(), *new_slot, older_query);
 
         finalize_query_span.record("wall_time", start_time.elapsed().as_millis() as i64);
@@ -360,6 +375,25 @@ impl GpaCache {
             queries_for_slot: BTreeMap::new(),
             config,
             size: 0,
+            pinned_size: 0,
+        }
+    }
+
+    /// Whether a query of the given size is pinned (skipped by cleanup). A query
+    /// is pinned when `max_bytes_query_cleanup` is set and the query is larger
+    /// than that threshold.
+    pub fn is_pinned_size(&self, size: u64) -> bool {
+        self.config
+            .max_bytes_query_cleanup
+            .is_some_and(|max_evictable| size > max_evictable as u64)
+    }
+
+    /// Maximum number of bytes pinned queries are collectively allowed to hold.
+    /// Returns `u64::MAX` (no cap) when `max_pinned_bytes_ratio` is unset.
+    pub fn pinned_threshold(&self) -> u64 {
+        match self.config.max_pinned_bytes_ratio {
+            Some(ratio) => (self.config.max_total_bytes as f64 * ratio) as u64,
+            None => u64::MAX,
         }
     }
 
@@ -478,9 +512,13 @@ impl GpaCache {
     /// It will only cleanup if space is needed for the new query.
     ///
     /// Queries larger than `config.max_bytes_query_cleanup` (when set) are
-    /// pinned: they are skipped during eviction and kept in the cache. Because
-    /// of this, cleanup may free less than requested when the oldest slots hold
-    /// mostly pinned queries.
+    /// normally pinned: skipped during eviction and kept in the cache. The pin
+    /// is soft, however: pinned queries are only allowed to collectively hold up
+    /// to `pinned_threshold()` bytes. When pinned usage is over that cap, the
+    /// oldest pinned queries are evicted (via this same oldest-first walk) until
+    /// usage drops back under the cap. Because of pinning, cleanup may still free
+    /// less than requested when the oldest slots hold mostly pinned queries that
+    /// are within the cap.
     pub fn cleanup_old_queries(&mut self, mut bytes_to_free: u64) -> Option<u64> {
         let mut bytes_freed: u64 = 0;
 
@@ -491,39 +529,65 @@ impl GpaCache {
                 return None;
             }
         };
-        if available_bytes >= bytes_to_free {
+
+        // Size pressure: how many bytes we must evict to fit the new query.
+        let size_cleanup_needed = available_bytes < bytes_to_free;
+        bytes_to_free = bytes_to_free.saturating_sub(available_bytes);
+
+        // Pinned pressure: pinned queries are over their collective cap.
+        let pinned_threshold = self.pinned_threshold();
+        let pinned_cleanup_needed = self.pinned_size > pinned_threshold;
+
+        if !size_cleanup_needed && !pinned_cleanup_needed {
             return None;
-        } else {
-            bytes_to_free -= available_bytes;
         }
 
         let max_evictable = self.config.max_bytes_query_cleanup.map(|b| b as u64);
 
         // Walk slots oldest-first (`BTreeMap::retain` visits in ascending key
-        // order), draining evictable queries from each bucket in place. Queries
-        // larger than the threshold are pinned: left in their bucket and skipped.
-        // A slot whose bucket becomes empty is dropped from the map.
+        // order), draining queries from each bucket in place. A slot whose
+        // bucket becomes empty is dropped from the map.
         //
-        // Borrow `queries`/`size` separately from `queries_for_slot` so the
-        // closure can mutate them while iterating.
+        // Two independent budgets drive eviction:
+        //   - size: keep evicting (non-pinned) queries until `bytes_to_free` is
+        //     met, leaving pinned queries alone.
+        //   - pinned: while pinned usage is over `pinned_threshold`, evict the
+        //     oldest pinned queries too until usage is back under the cap.
+        //
+        // Borrow `queries`/`size`/`pinned_size` separately from
+        // `queries_for_slot` so the closure can mutate them while iterating.
         let queries = &mut self.queries;
         let size = &mut self.size;
+        let pinned_size = &mut self.pinned_size;
         self.queries_for_slot.retain(|_slot, bucket| {
-            if bytes_freed >= bytes_to_free {
-                return true; // enough freed: leave remaining slots untouched
+            if bytes_freed >= bytes_to_free && *pinned_size <= pinned_threshold {
+                return true; // both budgets satisfied: leave remaining slots untouched
             }
             bucket.retain(|q| {
-                if bytes_freed >= bytes_to_free {
+                let need_size = bytes_freed < bytes_to_free;
+                let need_pinned = *pinned_size > pinned_threshold;
+                if !need_size && !need_pinned {
                     return true;
                 }
-                // Pin (keep) queries larger than the configured threshold.
-                if let Some(max_evictable) = max_evictable
-                    && queries.get(q).is_some_and(|c| c.size > max_evictable)
-                {
+
+                let is_pinned = max_evictable
+                    .is_some_and(|max_evictable| queries.get(q).is_some_and(|c| c.size > max_evictable));
+
+                if is_pinned {
+                    // Keep pinned queries unless we are over the pinned cap.
+                    if !need_pinned {
+                        return true;
+                    }
+                } else if !need_size {
+                    // Non-pinned query, but there is no size pressure: keep it.
                     return true;
                 }
+
                 if let Some(cached) = queries.remove(q) {
                     *size = size.saturating_sub(cached.size);
+                    if is_pinned {
+                        *pinned_size = pinned_size.saturating_sub(cached.size);
+                    }
                     bytes_freed = bytes_freed.saturating_add(cached.size);
                 }
                 false

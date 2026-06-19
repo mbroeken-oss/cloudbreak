@@ -151,11 +151,15 @@ pub fn log_filter_handler(req: &Request<Incoming>) -> Result<HttpHandlerResponse
 ///   "config": {
 ///     "max_total_bytes": 1073741824,
 ///     "min_bytes_per_query": 65536,
-///     "max_bytes_query_cleanup": 104857600
+///     "max_bytes_query_cleanup": 104857600,
+///     "max_pinned_bytes_ratio": 0.5
 ///   },
 ///   "stats": {
 ///     "size_bytes": 234567890,
 ///     "utilization_percent": 21.85,
+///     "pinned_size_bytes": 314572800,
+///     "pinned_threshold_bytes": 536870912,
+///     "pinned_utilization_percent": 58.59,
 ///     "num_queries": 42,
 ///     "num_distinct_slots": 5,
 ///     "oldest_slot": 300100123,
@@ -435,12 +439,24 @@ struct GpaCacheConfigInfo {
     min_bytes_per_query: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_bytes_query_cleanup: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_pinned_bytes_ratio: Option<f64>,
 }
 
 #[derive(Serialize)]
 struct GpaCacheStatsInfo {
     size_bytes: u64,
     utilization_percent: f64,
+    /// Bytes currently held by pinned (non-evictable) queries.
+    pinned_size_bytes: u64,
+    /// Max bytes pinned queries are allowed to collectively hold. Omitted when
+    /// no pinned cap is configured (`max_pinned_bytes_ratio` unset).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pinned_threshold_bytes: Option<u64>,
+    /// Pinned usage as a percentage of `pinned_threshold_bytes`. Omitted when no
+    /// pinned cap is configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pinned_utilization_percent: Option<f64>,
     num_queries: usize,
     num_distinct_slots: usize,
     oldest_slot: Option<u64>,
@@ -495,9 +511,26 @@ fn build_gpa_cache_response(
     let oldest_slot = cache.queries_for_slot.keys().next().copied();
     let newest_slot = cache.queries_for_slot.keys().next_back().copied();
 
+    // Only report a pinned cap when one is actually configured.
+    let (pinned_threshold_bytes, pinned_utilization_percent) =
+        if cache.config.max_pinned_bytes_ratio.is_some() {
+            let threshold = cache.pinned_threshold();
+            let utilization = if threshold == 0 {
+                0.0
+            } else {
+                (cache.pinned_size as f64) / (threshold as f64) * 100.0
+            };
+            (Some(threshold), Some(utilization))
+        } else {
+            (None, None)
+        };
+
     let stats = GpaCacheStatsInfo {
         size_bytes: cache.size,
         utilization_percent,
+        pinned_size_bytes: cache.pinned_size,
+        pinned_threshold_bytes,
+        pinned_utilization_percent,
         num_queries: cache.queries.len(),
         num_distinct_slots: cache.queries_for_slot.len(),
         oldest_slot,
@@ -509,6 +542,7 @@ fn build_gpa_cache_response(
         max_total_bytes,
         min_bytes_per_query: cache.config.min_bytes_per_query,
         max_bytes_query_cleanup: cache.config.max_bytes_query_cleanup,
+        max_pinned_bytes_ratio: cache.config.max_pinned_bytes_ratio,
     };
 
     let queries = match params.detail {
