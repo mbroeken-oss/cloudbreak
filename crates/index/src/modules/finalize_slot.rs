@@ -25,6 +25,16 @@ const BLOCKS_MAP_WARN_THRESHOLD: usize = 500;
 
 const BLOCKS_MAP_WARN_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Confirmed blocks older than this many slots behind the slot being finalized are stale fork
+/// debris. Keeping a generous window preserves normal ancestor recovery while preventing a single
+/// orphan from forcing repeated anomaly scans/logs forever.
+const ORPHAN_BLOCK_RETENTION_SLOTS: u64 = 4_096;
+
+/// Upper bound for the in-memory "snapshot row already cleaned" pubkey cache. If it ever grows
+/// beyond this, clearing it is safe: the system may repeat some cleanup work, but correctness is
+/// unchanged because the database remains the source of truth.
+const SNAPSHOT_CLEANED_CACHE_MAX_ENTRIES: usize = 5_000_000;
+
 /// A confirmed-but-not-yet-finalized block kept in memory until it is finalized.
 ///
 /// For blocks received live from gRPC the chain fields (`blockhash`, `parent_slot`,
@@ -49,6 +59,8 @@ pub struct FinalizerInner {
     pub pause_reasons: HashSet<PauseReason>,
     /// Last time the blocks map was warned about being large.
     pub last_blocks_map_warn: Option<Instant>,
+    /// Last time old orphaned blocks were warned about.
+    pub last_orphan_blocks_warn: Option<Instant>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -314,27 +326,60 @@ impl SlotFinalizer {
         let ancestors = self.get_slot_ancestors(slot);
 
         for (slot, entry) in ancestors {
+            let is_repaired = entry.blockhash.is_empty();
             finalize_slot(
                 &self.config,
                 slot,
                 self.db.clone(),
                 entry.accounts,
                 self.updated_accounts_during_startup.clone(),
+                is_repaired,
             )
             .await;
         }
 
-        // After finalizing the slot and its ancestors, any older slot still in the map is unexpected
-        let lingering = {
-            let inner = self.inner.lock().expect("Failed to lock finalizer");
-            inner.blocks.keys().copied().filter(|s| *s < slot).min()
-        };
-        if let Some(min_slot) = lingering {
+        self.prune_old_orphan_blocks(slot);
+    }
+
+    fn prune_old_orphan_blocks(&self, finalized_slot: u64) {
+        let cutoff = finalized_slot.saturating_sub(ORPHAN_BLOCK_RETENTION_SLOTS);
+        let now = Instant::now();
+        let mut inner = self.inner.lock().expect("Failed to lock finalizer");
+
+        let orphan_slots = inner
+            .blocks
+            .keys()
+            .copied()
+            .filter(|slot| *slot < cutoff && !inner.pending.contains(slot))
+            .collect::<Vec<_>>();
+
+        for slot in &orphan_slots {
+            inner.blocks.remove(slot);
+        }
+
+        let lingering = inner
+            .blocks
+            .keys()
+            .copied()
+            .filter(|s| *s < finalized_slot)
+            .min();
+        if orphan_slots.is_empty() && lingering.is_none() {
+            return;
+        }
+
+        let should_warn = inner
+            .last_orphan_blocks_warn
+            .is_none_or(|last| now.duration_since(last) >= BLOCKS_MAP_WARN_INTERVAL);
+
+        if should_warn {
+            inner.last_orphan_blocks_warn = Some(now);
             tracing::warn!(
-                target: "finalize_anomaly",
-                "Slot {} older than just-finalized slot {} still present in the map after the ancestor walk (possible fork)",
-                min_slot,
-                slot
+                target: "finalizer_orphan_prune",
+                finalized_slot,
+                cutoff,
+                pruned = orphan_slots.len(),
+                oldest_remaining = lingering,
+                "Pruned stale fork/orphan blocks after finalization"
             );
         }
     }
@@ -413,6 +458,7 @@ async fn finalize_slot(
     db: DatabaseConnection,
     updated_accounts: AccountsReceivedPerBlock,
     updated_accounts_during_startup: UpdatedAccountsDuringStartup,
+    is_repaired: bool,
 ) {
     let start_time = Instant::now();
 
@@ -463,9 +509,11 @@ async fn finalize_slot(
 
         // Run snapshot cleanup in the same sequence as live cleanup. Parallel cleanup across the
         // partitioned accounts tables causes occasional Postgres deadlocks during gap repair.
-        db_queries::cleanup_accounts(
+        let snapshot_cleanup_batch =
+            updated_accounts_during_startup.snapshot_cleanup_batch(&batch, !is_repaired);
+        let snapshot_cleanup_ok = db_queries::cleanup_accounts(
             &db,
-            batch,
+            snapshot_cleanup_batch.clone(),
             slot,
             "snapshot_accounts",
             Arc::new(Mutex::new(0)),
@@ -473,6 +521,9 @@ async fn finalize_slot(
             config,
         )
         .await;
+        if snapshot_cleanup_ok {
+            updated_accounts_during_startup.mark_snapshot_accounts_cleaned(snapshot_cleanup_batch);
+        }
     }
 
     let closed_accounts = updated_accounts.closed_accounts.clone();
@@ -485,9 +536,11 @@ async fn finalize_slot(
     } else {
         // Closed accounts are not included in the updated accounts, so we need to clean them up
         // separately. Keep this sequenced with the other cleanup statements to avoid deadlocks.
-        db_queries::cleanup_accounts(
+        let snapshot_cleanup_batch = updated_accounts_during_startup
+            .snapshot_cleanup_batch(&updated_accounts.closed_accounts, !is_repaired);
+        let snapshot_cleanup_ok = db_queries::cleanup_accounts(
             &db,
-            updated_accounts.closed_accounts,
+            snapshot_cleanup_batch.clone(),
             slot,
             "snapshot_accounts",
             Arc::new(Mutex::new(0)),
@@ -495,6 +548,9 @@ async fn finalize_slot(
             config,
         )
         .await;
+        if snapshot_cleanup_ok {
+            updated_accounts_during_startup.mark_snapshot_accounts_cleaned(snapshot_cleanup_batch);
+        }
     }
 
     metrics::record_finalize_slot(start_time.elapsed().as_secs_f64(), "total");
@@ -510,6 +566,7 @@ async fn finalize_slot(
 #[derive(Clone)]
 pub struct UpdatedAccountsDuringStartup {
     pub accounts: Arc<Mutex<HashSet<Vec<u8>>>>,
+    pub snapshot_accounts_cleaned: Arc<Mutex<HashSet<Vec<u8>>>>,
     pub snapshot_processing_state: Arc<Mutex<SnapshotProcessingState>>,
     health: ServiceHealth,
 }
@@ -521,6 +578,7 @@ impl UpdatedAccountsDuringStartup {
     ) -> Self {
         Self {
             accounts: Arc::new(Mutex::new(HashSet::new())),
+            snapshot_accounts_cleaned: Arc::new(Mutex::new(HashSet::new())),
             snapshot_processing_state,
             health,
         }
@@ -538,6 +596,52 @@ impl UpdatedAccountsDuringStartup {
     pub fn add_batch_to_cache_during_startup(&self, batch: Vec<Vec<u8>>) {
         let mut accounts = self.accounts.lock().expect("Failed to lock accounts");
         accounts.extend(batch);
+    }
+
+    pub fn snapshot_cleanup_batch(
+        &self,
+        batch: &[Vec<u8>],
+        use_cleaned_cache: bool,
+    ) -> Vec<Vec<u8>> {
+        if batch.is_empty() {
+            return Vec::new();
+        }
+
+        if !use_cleaned_cache {
+            return batch.to_vec();
+        }
+
+        let cleaned = self
+            .snapshot_accounts_cleaned
+            .lock()
+            .expect("Failed to lock snapshot_accounts_cleaned");
+
+        batch
+            .iter()
+            .filter(|pubkey| !cleaned.contains(*pubkey))
+            .cloned()
+            .collect()
+    }
+
+    pub fn mark_snapshot_accounts_cleaned(&self, batch: Vec<Vec<u8>>) {
+        if batch.is_empty() {
+            return;
+        }
+
+        let mut cleaned = self
+            .snapshot_accounts_cleaned
+            .lock()
+            .expect("Failed to lock snapshot_accounts_cleaned");
+        cleaned.extend(batch);
+        if cleaned.len() > SNAPSHOT_CLEANED_CACHE_MAX_ENTRIES {
+            tracing::warn!(
+                target: "snapshot_cleanup_cache",
+                entries = cleaned.len(),
+                max_entries = SNAPSHOT_CLEANED_CACHE_MAX_ENTRIES,
+                "Clearing snapshot cleanup cache after reaching size limit"
+            );
+            cleaned.clear();
+        }
     }
 
     /// Only cleans up the accounts if we are NOT in startup and if the accounts cache is not empty already
@@ -563,6 +667,7 @@ impl UpdatedAccountsDuringStartup {
             .expect("Failed to lock accounts")
             .drain()
             .collect::<Vec<_>>();
+        let snapshot_accounts_cleaned = self.snapshot_accounts_cleaned.clone();
 
         let db = db.clone();
         let config = config.clone();
@@ -582,11 +687,14 @@ impl UpdatedAccountsDuringStartup {
                 .collect::<Vec<_>>();
 
             let mut join_set = JoinSet::new();
+            let mut cleaned_accounts = Vec::with_capacity(accounts.len());
             const MAX_CONCURRENT_CLEANUP_TASKS: usize = 10;
 
             for batch in batches {
                 while join_set.len() >= MAX_CONCURRENT_CLEANUP_TASKS {
-                    join_set.join_next().await;
+                    if let Some(Ok((batch, true))) = join_set.join_next().await {
+                        cleaned_accounts.extend(batch);
+                    }
                 }
 
                 let db = db.clone();
@@ -595,9 +703,9 @@ impl UpdatedAccountsDuringStartup {
                     let _guard =
                         metrics::TokioTaskCounterGuard::new("startup_snapshot_accounts_cleanup");
 
-                    db_queries::cleanup_accounts(
+                    let cleanup_ok = db_queries::cleanup_accounts(
                         &db,
-                        batch,
+                        batch.clone(),
                         slot,
                         "snapshot_accounts",
                         Arc::new(Mutex::new(0)),
@@ -605,10 +713,39 @@ impl UpdatedAccountsDuringStartup {
                         &config_clone,
                     )
                     .await;
+                    (batch, cleanup_ok)
                 });
             }
 
-            join_set.join_all().await;
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok((batch, true)) => cleaned_accounts.extend(batch),
+                    Ok((_batch, false)) => {}
+                    Err(err) => {
+                        tracing::error!(
+                            target: "cleanup_stored_accounts",
+                            "startup snapshot cleanup task failed: {}",
+                            err
+                        );
+                    }
+                }
+            }
+
+            {
+                let mut cleaned = snapshot_accounts_cleaned
+                    .lock()
+                    .expect("Failed to lock snapshot_accounts_cleaned");
+                cleaned.extend(cleaned_accounts);
+                if cleaned.len() > SNAPSHOT_CLEANED_CACHE_MAX_ENTRIES {
+                    tracing::warn!(
+                        target: "snapshot_cleanup_cache",
+                        entries = cleaned.len(),
+                        max_entries = SNAPSHOT_CLEANED_CACHE_MAX_ENTRIES,
+                        "Clearing snapshot cleanup cache after startup cleanup reached size limit"
+                    );
+                    cleaned.clear();
+                }
+            }
 
             let elapsed = start_time.elapsed().as_secs_f64();
             tracing::info!(target: "cleanup_stored_accounts", "Cleaned up stored accounts from snapshot_accounts in {} seconds", elapsed);

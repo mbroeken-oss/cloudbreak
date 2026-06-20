@@ -213,9 +213,10 @@ pub async fn clean_up_closed_accounts(database: &DatabaseConnection) -> Result<(
 pub async fn create_temp_snapshot_account_versions_table(
     database: &DatabaseConnection,
 ) -> Result<(), anyhow::Error> {
-    tracing::info!(target: "create_temp_snapshot_account_versions_table", "start creating temp snapshot account versions table");
+    tracing::info!(target: "create_temp_snapshot_account_versions_table", "start recreating temp snapshot account versions table");
 
-    let sql = "CREATE UNLOGGED TABLE IF NOT EXISTS temp_snapshot_account_versions (pubkey BYTEA NOT NULL, slot BIGINT NOT NULL, owner BYTEA NOT NULL);";
+    let sql = "DROP TABLE IF EXISTS temp_snapshot_account_versions;
+CREATE UNLOGGED TABLE temp_snapshot_account_versions (pubkey BYTEA NOT NULL, slot BIGINT NOT NULL, owner BYTEA NOT NULL);";
 
     let result = database.execute_unprepared(sql).await;
 

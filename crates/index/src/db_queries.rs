@@ -261,12 +261,16 @@ pub async fn cleanup_accounts(
     new_accounts_in_slot: Arc<Mutex<usize>>,
     metrics_tag: &str,
     config: &IndexConfig,
-) {
+) -> bool {
     let start_time = Instant::now();
     let pubkeys_len = pubkeys.len();
     let cleanup_sql = include_str!("db/cleanup.sql");
     let cleanup_sql = cleanup_sql.replace("accounts_table_name", table_name);
     let query_timeout = Duration::from_secs(config.database.finalize_slot_queries_timeout);
+
+    if pubkeys.is_empty() {
+        return true;
+    }
 
     let mut result = Err(sea_orm::DbErr::RecordNotInserted);
     for attempt in 1..=DB_DEADLOCK_RETRIES {
@@ -339,14 +343,16 @@ pub async fn cleanup_accounts(
                     );
                 }
             }
+            metrics::record_finalize_slot(start_time.elapsed().as_secs_f64(), metrics_tag);
+            true
         }
         Err(e) => {
             tracing::error!("finalize_slot: failed to finalize slot {}: {}", slot, e);
             metrics::increment_db_errors();
+            metrics::record_finalize_slot(start_time.elapsed().as_secs_f64(), metrics_tag);
+            false
         }
     }
-
-    metrics::record_finalize_slot(start_time.elapsed().as_secs_f64(), metrics_tag);
 }
 
 pub async fn insert_slot(
