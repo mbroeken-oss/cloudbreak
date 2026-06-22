@@ -102,7 +102,10 @@ impl<'a> SqlDataSliceFilter<'a> {
                     hex::encode(bytes)
                 ))
             }
-            RpcFilterType::TokenAccountState => None,
+            RpcFilterType::TokenAccountState => Some(format!(
+                "(length({0}.data) = 165 OR (length({0}.data) > 165 AND SUBSTRING({0}.data FROM 166 FOR 1) = E'\\\\x02'::bytea))",
+                self.table
+            )),
         }
     }
 }
