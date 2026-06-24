@@ -5,7 +5,7 @@
 
 use hyper::StatusCode;
 use prometheus::{
-    HistogramOpts, HistogramVec, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
+    HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
 };
 use std::{
     convert::Infallible,
@@ -40,6 +40,36 @@ lazy_static::lazy_static! {
     )
     .unwrap();
 
+    /// Per-request GPA cache hit percentage (0-100), labelled by method and
+    /// response size bucket. Reports `0` when the cache is inactive or the
+    /// response has no accounts. Buckets are fine-grained near both ends so
+    /// fully-cached (100) and fully-fresh (0) requests stand out.
+    pub static ref CLOUDBREAK_API_CACHE_HIT_PERCENT: HistogramVec = HistogramVec::new(
+        HistogramOpts::new(
+            "cloudbreak_api_cache_hit_percent",
+            "Per-request GPA cache hit percentage (0-100), labelled by method and response size bucket."
+        )
+        .buckets(vec![
+            0.0, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0,
+            60.0, 70.0, 80.0, 90.0, 95.0, 97.0, 98.0, 99.0, 99.5, 100.0,
+        ]),
+        &["method", "bytes"],
+    )
+    .unwrap();
+
+    /// Response bytes served, labelled by method and `kind`: `total` counts all
+    /// response bytes, `cached` counts the subset served from the GPA cache
+    /// (`0` for paths that don't use the cache). Effective cache utilization is
+    /// `kind="cached" / kind="total"` in Grafana.
+    pub static ref CLOUDBREAK_API_RESPONSE_BYTES_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "cloudbreak_api_response_bytes_total",
+            "Response bytes served, labelled by method and kind (total/cached)."
+        ),
+        &["method", "kind"],
+    )
+    .unwrap();
+
     /// Count of requests by subscription ID
     pub static ref CLOUDBREAK_API_REQUESTS_BY_SUBSCRIPTION_ID: IntCounterVec = IntCounterVec::new(
         Opts::new(
@@ -70,6 +100,41 @@ lazy_static::lazy_static! {
     pub static ref CLOUDBREAK_API_BATCH_REQUESTS: IntCounterVec = IntCounterVec::new(
         Opts::new("cloudbreak_api_batch_requests_total", "Total number of batched requests by batch size"),
         &["batch_size"]
+    ).unwrap();
+
+    /// Current size of the GPA cache in bytes.
+    pub static ref CLOUDBREAK_GPA_CACHE_SIZE_BYTES: IntGauge = IntGauge::new(
+        "cloudbreak_gpa_cache_size_bytes",
+        "Current size of the GPA cache in bytes"
+    ).unwrap();
+
+    /// Configured maximum size of the GPA cache in bytes. Exposed so utilization
+    /// (`size / max`) can be computed at query time in Grafana.
+    pub static ref CLOUDBREAK_GPA_CACHE_MAX_BYTES: IntGauge = IntGauge::new(
+        "cloudbreak_gpa_cache_max_bytes",
+        "Configured maximum size of the GPA cache in bytes"
+    ).unwrap();
+
+    /// Total number of GPA cache entries evicted by cleanup to make room for a
+    /// different query. Labelled by `used` ("used"/"unused") indicating whether
+    /// the evicted entry had ever served a cache hit. A high rate of `unused`
+    /// evictions indicates cache churn (e.g. `min-bytes-per-query` set too low).
+    pub static ref CLOUDBREAK_GPA_CACHE_EVICTIONS_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "cloudbreak_gpa_cache_evictions_total",
+            "Total GPA cache entries evicted by cleanup, labelled by whether the entry was ever a cache hit"
+        ),
+        &["used"],
+    ).unwrap();
+
+    /// Total number of bytes evicted from the GPA cache by cleanup. Same `used`
+    /// labelling as `CLOUDBREAK_GPA_CACHE_EVICTIONS_TOTAL`.
+    pub static ref CLOUDBREAK_GPA_CACHE_EVICTED_BYTES_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "cloudbreak_gpa_cache_evicted_bytes_total",
+            "Total bytes evicted from the GPA cache by cleanup, labelled by whether the entry was ever a cache hit"
+        ),
+        &["used"],
     ).unwrap();
 }
 
@@ -124,10 +189,16 @@ pub fn setup_metrics(config: &ApiConfig) -> anyhow::Result<()> {
         }
         register!(CLOUDBREAK_API_REQUESTS_TOTAL);
         register!(CLOUDBREAK_API_REQUEST_DURATION_MS);
+        register!(CLOUDBREAK_API_CACHE_HIT_PERCENT);
+        register!(CLOUDBREAK_API_RESPONSE_BYTES_TOTAL);
         register!(CLOUDBREAK_API_DATA_FETCHED_BY_SUBSCRIPTION_ID);
         register!(CLOUDBREAK_API_REQUESTS_BY_SUBSCRIPTION_ID);
         register!(CLOUDBREAK_API_INFLIGHT_REQUESTS);
         register!(CLOUDBREAK_API_BATCH_REQUESTS);
+        register!(CLOUDBREAK_GPA_CACHE_SIZE_BYTES);
+        register!(CLOUDBREAK_GPA_CACHE_MAX_BYTES);
+        register!(CLOUDBREAK_GPA_CACHE_EVICTIONS_TOTAL);
+        register!(CLOUDBREAK_GPA_CACHE_EVICTED_BYTES_TOTAL);
     });
 
     // Set the max connections as a reference metric at startup
@@ -170,6 +241,8 @@ impl GpaMetricsData {
         json_enconde_time: f64,
         total_time: f64,
         json_bytes: u64,
+        cache_bytes: u64,
+        cache_hit_percent: f64,
         subscription_id: String,
     ) {
         let bytes_bucket = bytes_bucket(json_bytes);
@@ -194,6 +267,18 @@ impl GpaMetricsData {
         CLOUDBREAK_API_REQUEST_DURATION_MS
             .with_label_values(&[label.as_str(), bytes_bucket])
             .observe(total_time);
+
+        CLOUDBREAK_API_CACHE_HIT_PERCENT
+            .with_label_values(&[label.as_str(), bytes_bucket])
+            .observe(cache_hit_percent);
+
+        CLOUDBREAK_API_RESPONSE_BYTES_TOTAL
+            .with_label_values(&[label.as_str(), "total"])
+            .inc_by(json_bytes);
+
+        CLOUDBREAK_API_RESPONSE_BYTES_TOTAL
+            .with_label_values(&[label.as_str(), "cached"])
+            .inc_by(cache_bytes);
 
         CLOUDBREAK_API_REQUESTS_BY_SUBSCRIPTION_ID
             .with_label_values(&[&subscription_id])

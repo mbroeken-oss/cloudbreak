@@ -6,7 +6,7 @@
 use crate::tracker;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, Statement};
 use solana_pubkey::Pubkey;
-use solana_rpc_client_api::config::RpcProgramAccountsConfig;
+use cloudbreak_core::modules::rpc_filter_type::RpcProgramAccountsConfig;
 use tracing::{error, info, warn};
 use cloudbreak_core::QueryTrackerConfig;
 
@@ -17,11 +17,20 @@ const COUNT_AUTO_INDEXES_SQL: &str = "SELECT COUNT(*) FROM pg_indexes \
 async fn count_auto_indexes(db: &DatabaseConnection) -> Option<usize> {
     let stmt = Statement::from_string(db.get_database_backend(), COUNT_AUTO_INDEXES_SQL);
     match db.query_one(stmt).await {
-        Ok(Some(row)) => row
-            .try_get_by_index::<i64>(0)
-            .ok()
-            .map(|v| v.max(0) as usize),
-        Ok(None) => Some(0),
+        Ok(Some(row)) => {
+            let count = row
+                .try_get_by_index::<i64>(0)
+                .ok()
+                .map(|v| v.max(0) as usize);
+            if let Some(count) = count {
+                crate::metrics::SNAPSHOT_ACCOUNTS_INDEXES.set(count as i64);
+            }
+            count
+        }
+        Ok(None) => {
+            crate::metrics::SNAPSHOT_ACCOUNTS_INDEXES.set(0);
+            Some(0)
+        }
         Err(e) => {
             error!(
                 target: "query_tracker_index_listener",
