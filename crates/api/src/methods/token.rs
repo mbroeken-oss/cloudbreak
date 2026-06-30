@@ -18,6 +18,8 @@ use sea_orm::{DatabaseConnection, EntityTrait};
 use serde::Deserialize;
 use serde::de::{self, Deserializer, Visitor};
 
+use cloudbreak_core::modules::rpc_filter_type::{RpcFilterType, RpcProgramAccountsConfig};
+use cloudbreak_entity::slots;
 use solana_account::AccountSharedData;
 use solana_account_decoder::parse_account_data::{
     AccountAdditionalDataV3, SplTokenAdditionalDataV2,
@@ -28,10 +30,7 @@ use solana_account_decoder::{
 use solana_account_decoder_client_types::{UiAccount, UiAccountData};
 use solana_commitment_config::CommitmentLevel;
 use solana_pubkey::Pubkey;
-use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
-
-use cloudbreak_entity::slots;
-use solana_rpc_client_api::filter::RpcFilterType;
+use solana_rpc_client_api::config::RpcAccountInfoConfig;
 use solana_rpc_client_api::response::{
     Response as RpcResponse, RpcKeyedAccount, RpcResponseContext,
 };

@@ -18,6 +18,9 @@ use crate::metrics::GpaMetricsData;
 use crate::modules::cache::{GpaProcessor, KeyedRpcAccount, MaybeJsonAccount};
 use crate::{db_query, metrics};
 use async_stream::try_stream;
+use cloudbreak_core::modules::rpc_filter_type::{
+    RpcProgramAccountsConfig, account_matches_value_cmps, has_value_cmp,
+};
 use cloudbreak_entity::slots;
 use futures::{Stream, StreamExt};
 use rust_decimal::prelude::ToPrimitive;
@@ -30,7 +33,6 @@ use solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig, encode_ui_acc
 use solana_account_decoder_client_types::{UiAccount, UiAccountData};
 use solana_commitment_config::CommitmentLevel;
 use solana_pubkey::Pubkey;
-use solana_rpc_client_api::config::RpcProgramAccountsConfig;
 use solana_rpc_client_api::response::RpcKeyedAccount;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::time::{Instant, timeout};
@@ -49,6 +51,8 @@ pub struct GpaStreamingResponse {
     /// All context slot data will be added to json using this on [`gpa_streaming_response_body`]
     pub context_slot: Option<u64>,
     pub gpa_processor: GpaProcessor,
+    pub program: Pubkey,
+    pub encoding: UiAccountEncoding,
 }
 
 #[tracing::instrument(name = "gpa_rpc", skip_all, fields(program = %program))]
@@ -64,6 +68,11 @@ pub async fn get_program_accounts(
     let program = program
         .parse::<solana_pubkey::Pubkey>()
         .map_err(|_| RpcError::InvalidParams)?;
+
+    let encoding = config
+        .account_config
+        .encoding
+        .unwrap_or(UiAccountEncoding::Binary);
 
     if !state.indexer_filter.is_program_selected(&program) {
         return Err(RpcError::KeyExcludedFromSecondaryIndex {
@@ -165,6 +174,8 @@ pub async fn get_program_accounts(
                     })),
                     metrics_data: response.metrics_data,
                     gpa_processor: GpaProcessor::Standard,
+                    program,
+                    encoding,
                 });
             }
             Err(_) => {
@@ -249,7 +260,9 @@ pub async fn get_program_accounts(
     let mut request_processor = if rows_only_base64 {
         GpaProcessor::Standard
     } else {
-        state.gpa_processor.for_request()
+        state
+            .gpa_processor
+            .for_request(config.filters.as_deref().unwrap_or(&[]))
     };
 
     // Database query
@@ -281,6 +294,8 @@ pub async fn get_program_accounts(
         accounts_stream: encoded_accounts_stream,
         metrics_data: Some(metrics_data),
         gpa_processor: request_processor,
+        program,
+        encoding,
     })
 }
 
@@ -320,14 +335,22 @@ fn gpa_db_query(
     let (tx, rx) = mpsc::unbounded_channel::<Result<Vec<PgRow>, RpcError>>();
 
     let metrics_data_clone = input.metrics_data.clone();
+    let parent_span = tracing::Span::current();
     tokio::spawn(async move {
         let db_query = async {
             let mut db_query_total_ms = Duration::from_millis(0);
             let mut db_first_row_time = Duration::from_millis(0);
 
-            let db_span = tracing::info_span!("gpa_db", wall_time = tracing::field::Empty);
-            let db_execution_span =
-                tracing::info_span!("gpa_db_execution", wall_time = tracing::field::Empty);
+            let db_span = tracing::info_span!(
+                parent: &parent_span,
+                "gpa_db",
+                wall_time = tracing::field::Empty
+            );
+            let db_execution_span = tracing::info_span!(
+                parent: &parent_span,
+                "gpa_db_execution",
+                wall_time = tracing::field::Empty
+            );
             let mut first_loop_iteration = true;
 
             let mut rows = sqlx::raw_sql(&sql).fetch(&pool);
@@ -428,6 +451,12 @@ pub fn gpa_encoding_stream(input: GpaEncodingInput) -> EncodedAccountBatchStream
         .unwrap_or(UiAccountEncoding::Binary);
     let data_slice = config.account_config.data_slice;
 
+    // ValueCmp filters are applied here as an in-memory post-filter over the streamed rows.
+    // Captured once; the per-row pass is skipped entirely when no ValueCmp filters are present.
+    // Note: a request with ValueCmp filters always uses the `Standard` (non-cached) processor
+    let filters = config.filters.clone().unwrap_or_default();
+    let apply_value_cmp = has_value_cmp(&filters);
+
     // Accounts encoding step
     let stream = try_stream! {
         let encode_span = tracing::info_span!(
@@ -444,6 +473,17 @@ pub fn gpa_encoding_stream(input: GpaEncodingInput) -> EncodedAccountBatchStream
         while let Some(batch_result) = rx.recv().await {
             let encode_iteration_start_time = Instant::now();
             let batch = batch_result?;
+
+            // Apply the ValueCmp post-filter before encoding so non-matching
+            // accounts are never encoded or counted.
+            let batch = if apply_value_cmp {
+                batch
+                    .into_iter()
+                    .filter(|row| account_matches_value_cmps(&filters, &row.get::<Vec<u8>, _>(6)))
+                    .collect::<Vec<_>>()
+            } else {
+                batch
+            };
 
             let encode_span_clone = encode_span.clone();
             let gpa_processor = gpa_processor.clone();

@@ -161,6 +161,7 @@ async fn process_downloaded_snapshot(
     if let Err(e) = db_queries::persist_epoch_stakes(database, &stake_data).await {
         tracing::error!("Failed to persist epoch stakes from snapshot: {:?}", e);
     }
+
     let mut account_file_workers: JoinSet<Result<()>> = JoinSet::new();
     let accounts_file_concurency = config.accounts_file_concurency.unwrap_or(32);
     let programs_include = config

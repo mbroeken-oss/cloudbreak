@@ -3,10 +3,10 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::modules::rpc_filter_type::RpcProgramAccountsConfig;
 use reqwest::Client;
 use serde::Serialize;
 use solana_pubkey::Pubkey;
-use solana_rpc_client_api::config::RpcProgramAccountsConfig;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

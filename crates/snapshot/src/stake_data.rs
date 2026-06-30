@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use solana_pubkey::Pubkey;
+#[allow(deprecated)]
 use solana_runtime::epoch_stakes::VersionedEpochStakes;
 
 use crate::accountsdb_helpers::DeserializableVersionedBank;

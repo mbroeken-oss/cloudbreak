@@ -78,6 +78,7 @@ pub struct ObsoleteIncrementalSnapshotPersistence {
 /// (the source for `epochVoteAccount`)
 #[derive(Clone, Debug, Deserialize)]
 #[allow(dead_code)]
+#[allow(deprecated)]
 pub struct ExtraFields {
     #[serde(deserialize_with = "default_on_eof")]
     pub lamports_per_signature: u64,

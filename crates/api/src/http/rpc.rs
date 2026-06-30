@@ -4,14 +4,13 @@
  */
 
 use bytes::Bytes;
+use cloudbreak_core::modules::rpc_filter_type::RpcProgramAccountsConfig;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Incoming;
 use hyper::{Request, StatusCode};
 use serde::Serialize;
 use solana_commitment_config::CommitmentConfig;
-use solana_rpc_client_api::config::{
-    RpcAccountInfoConfig, RpcContextConfig, RpcProgramAccountsConfig,
-};
+use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcContextConfig};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::time::Instant;
@@ -172,7 +171,13 @@ async fn process_single_request(
 
             let result = methods::get_account_info::get_account_info(state, pubkey, config).await;
 
-            let status_label = if result.is_ok() { "success" } else { "error" };
+            let status_label = match result.as_ref() {
+                Ok(_) => "success",
+                Err(err) => {
+                    tracing::error!(target: "api_request_errors_count", "getAccountInfo error: {:?}", err);
+                    "error"
+                }
+            };
             metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                 .with_label_values(&["gAI", status_label])
                 .inc();
@@ -197,7 +202,13 @@ async fn process_single_request(
 
             let result = methods::get_balance::get_balance(state, pubkey, config).await;
 
-            let status_label = if result.is_ok() { "success" } else { "error" };
+            let status_label = match result.as_ref() {
+                Ok(_) => "success",
+                Err(err) => {
+                    tracing::error!(target: "api_request_errors_count", "getBalance error: {:?}", err);
+                    "error"
+                }
+            };
             metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                 .with_label_values(&["getBalance", status_label])
                 .inc();
@@ -226,7 +237,17 @@ async fn process_single_request(
             let result =
                 methods::get_multiple_accounts::get_multiple_accounts(state, pubkeys, config).await;
 
-            let status_label = if result.is_ok() { "success" } else { "error" };
+            let status_label = match result.as_ref() {
+                Ok(_) => "success",
+                Err(err) => {
+                    tracing::error!(
+                        target: "api_request_errors_count",
+                        "getMultipleAccounts error: {:?}",
+                        err
+                    );
+                    "error"
+                }
+            };
             metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                 .with_label_values(&["getMultipleAccounts", status_label])
                 .inc();
@@ -252,20 +273,22 @@ async fn process_single_request(
             let config: Option<RpcProgramAccountsConfig> =
                 extract_param(&rpc_request.params, 1).ok().flatten();
 
-            let gpa_response =
-                match methods::program::get_program_accounts(state, program, config).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        metrics::CLOUDBREAK_API_REQUESTS_TOTAL
-                            .with_label_values(&["gPA", "error"])
-                            .inc();
-                        return make_error_response(
-                            id,
-                            e.to_numeric_code(),
-                            e.to_error_code().to_string(),
-                        );
-                    }
-                };
+            let gpa_response = match methods::program::get_program_accounts(state, program, config)
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(target: "api_request_errors_count", "getProgramAccounts error: {:?}", e);
+                    metrics::CLOUDBREAK_API_REQUESTS_TOTAL
+                        .with_label_values(&["gPA", "error"])
+                        .inc();
+                    return make_error_response(
+                        id,
+                        e.to_numeric_code(),
+                        e.to_error_code().to_string(),
+                    );
+                }
+            };
 
             let body = match gpa_streaming_response_body(
                 id.clone(),
@@ -277,6 +300,7 @@ async fn process_single_request(
             {
                 Ok(s) => s,
                 Err(e) => {
+                    tracing::error!(target: "api_request_errors_count", "getProgramAccounts error: {:?}", e);
                     metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                         .with_label_values(&["gPA", "error"])
                         .inc();
@@ -308,21 +332,24 @@ async fn process_single_request(
             let config: Option<methods::mint_accounts::GetTokenAccountsByMintConfig> =
                 extract_param(&rpc_request.params, 1).ok().flatten();
 
-            let gpa_response =
-                match methods::mint_accounts::get_token_accounts_by_mint(state, mint, config).await
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        metrics::CLOUDBREAK_API_REQUESTS_TOTAL
-                            .with_label_values(&["gTABM", "error"])
-                            .inc();
-                        return make_error_response(
-                            id,
-                            e.to_numeric_code(),
-                            e.to_error_code().to_string(),
-                        );
-                    }
-                };
+            let gpa_response = match methods::mint_accounts::get_token_accounts_by_mint(
+                state, mint, config,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(target: "api_request_errors_count", "getTokenAccountsByMint error: {:?}", e);
+                    metrics::CLOUDBREAK_API_REQUESTS_TOTAL
+                        .with_label_values(&["gTABM", "error"])
+                        .inc();
+                    return make_error_response(
+                        id,
+                        e.to_numeric_code(),
+                        e.to_error_code().to_string(),
+                    );
+                }
+            };
 
             let body = match gpa_streaming_response_body(
                 id.clone(),
@@ -334,6 +361,7 @@ async fn process_single_request(
             {
                 Ok(s) => s,
                 Err(e) => {
+                    tracing::error!(target: "api_request_errors_count", "getTokenAccountsByMint error: {:?}", e);
                     metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                         .with_label_values(&["gTABM", "error"])
                         .inc();
@@ -370,7 +398,17 @@ async fn process_single_request(
             )
             .await;
 
-            let status_label = if result.is_ok() { "success" } else { "error" };
+            let status_label = match result.as_ref() {
+                Ok(_) => "success",
+                Err(err) => {
+                    tracing::error!(
+                        target: "api_request_errors_count",
+                        "getTokenAccountBalance error: {:?}",
+                        err
+                    );
+                    "error"
+                }
+            };
             metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                 .with_label_values(&["getTokenAccountBalance", status_label])
                 .inc();
@@ -420,9 +458,12 @@ async fn process_single_request(
                     json_start_time.elapsed().as_millis() as f64,
                     start_time.elapsed().as_millis() as f64,
                     response_size,
+                    0,
+                    0.0,
                     subscription_id.to_string(),
                 );
             } else {
+                tracing::error!(target: "api_request_errors_count", "getTokenAccountsByOwner error: no metrics data");
                 metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                     .with_label_values(&["gTABO", "error"])
                     .inc();
@@ -463,9 +504,12 @@ async fn process_single_request(
                     json_start_time.elapsed().as_millis() as f64,
                     start_time.elapsed().as_millis() as f64,
                     response_size,
+                    0,
+                    0.0,
                     subscription_id.to_string(),
                 );
             } else {
+                tracing::error!(target: "api_request_errors_count", "getTokenAccountsByDelegate error: no metrics data");
                 metrics::CLOUDBREAK_API_REQUESTS_TOTAL
                     .with_label_values(&["gTABD", "error"])
                     .inc();
@@ -531,8 +575,7 @@ async fn gpa_streamed_to_buffered(
     if valid {
         bytes
     } else {
-        tracing::error!("getProgramAccounts streaming body was truncated mid-flight;");
-
+        tracing::error!(target: "api_request_errors_count", "getProgramAccounts streaming body was truncated mid-flight;");
         metrics::CLOUDBREAK_API_REQUESTS_TOTAL
             .with_label_values(&["gPA", "error"])
             .inc();

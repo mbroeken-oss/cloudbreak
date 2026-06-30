@@ -32,7 +32,7 @@ use solana_rpc_client_api::response::RpcResponseContext;
 use tokio::time::Instant;
 
 use crate::error::RpcError;
-use crate::methods::program::GpaStreamingResponse;
+use crate::methods::program::{GpaStreamingResponse, encoding_to_string};
 use crate::metrics;
 use crate::modules::cache::MaybeJsonAccount;
 
@@ -54,9 +54,12 @@ pub async fn gpa_streaming_response_body(
     gpa_global_start_time: Instant,
     subscription_id: String,
 ) -> Result<UnsyncBoxBody<Bytes, Infallible>, RpcError> {
+    let _guard = metrics::InFlightRequestGuard::new("gpa_streaming");
     let mut accounts_stream = gpa_response.accounts_stream;
     let metrics_data = gpa_response.metrics_data;
     let mut gpa_processor = gpa_response.gpa_processor;
+    let program = gpa_response.program;
+    let encoding = gpa_response.encoding;
 
     let first_batch = match accounts_stream.next().await {
         Some(Err(e)) => return Err(e),
@@ -67,11 +70,25 @@ pub async fn gpa_streaming_response_body(
     let streaming_response_body_wrapper =
         StreamingResponseBodyWrapper::new(gpa_response.context_slot, id);
 
+    let request_span = tracing::Span::current();
+
     let body_stream = stream! {
-        let json_span = tracing::info_span!("json_encoding", wall_time = tracing::field::Empty, json_bytes = tracing::field::Empty, total_wall_time = tracing::field::Empty);
+        let json_span = tracing::info_span!(
+            parent: &request_span,
+            "json_encoding",
+            program = %program,
+            encoding = encoding_to_string(&encoding),
+            accounts = tracing::field::Empty,
+            wall_time = tracing::field::Empty,
+            json_bytes = tracing::field::Empty,
+            total_wall_time = tracing::field::Empty,
+        );
 
         let mut json_encode_ms = Duration::from_millis(0);
         let mut json_bytes = 0u64;
+        let mut total_cache_hits = 0u64;
+        let mut total_cache_bytes = 0u64;
+        let mut accounts_count = first_batch.len() as u64;
         json_bytes += streaming_response_body_wrapper.start.len() as u64;
 
         // Yield with the start of the JSON array
@@ -107,6 +124,8 @@ pub async fn gpa_streaming_response_body(
                 }
             };
 
+            accounts_count += batch.len() as u64;
+
             for acc in batch {
                 let account_start_time = Instant::now();
                 buf.put_u8(b',');
@@ -141,12 +160,14 @@ pub async fn gpa_streaming_response_body(
                     let frozen = buf.split().freeze();
                     json_bytes += frozen.len() as u64;
 
-                    drain_pending_into_cache(
+                    let drained = drain_pending_into_cache(
                         &frozen,
                         &mut pending_fresh,
                         &mut pending_cached,
                         &mut gpa_processor,
                     );
+                    total_cache_hits += drained.cache_hits;
+                    total_cache_bytes += drained.cache_bytes;
 
                     if buf.capacity() < STREAM_BUFFER_PREALLOC {
                         buf.reserve(STREAM_BUFFER_PREALLOC - buf.capacity());
@@ -161,33 +182,49 @@ pub async fn gpa_streaming_response_body(
             let frozen = buf.split().freeze();
             json_bytes += frozen.len() as u64;
 
-            drain_pending_into_cache(
+            let drained = drain_pending_into_cache(
                 &frozen,
                 &mut pending_fresh,
                 &mut pending_cached,
                 &mut gpa_processor,
             );
+            total_cache_hits += drained.cache_hits;
+            total_cache_bytes += drained.cache_bytes;
 
             yield Ok(Frame::data(frozen));
         }
 
         json_bytes += streaming_response_body_wrapper.end.len() as u64;
 
+        // Per-account cache hit ratio for this request, as a percentage in
+        // [0, 100]. Reports 0 when there are no accounts (or the cache is
+        // inactive), matching the `/debug` endpoint's `cache_hit_percent`.
+        let cache_hit_percent = if accounts_count == 0 {
+            0.0
+        } else {
+            (total_cache_hits as f64) / (accounts_count as f64) * 100.0
+        };
+
         if let Some(metrics_data) = metrics_data {
             metrics_data.record_metrics(
                 json_encode_ms.as_millis() as f64,
                 gpa_global_start_time.elapsed().as_millis() as f64,
                 json_bytes,
+                total_cache_bytes,
+                cache_hit_percent,
                 subscription_id,
             );
         }
 
+        json_span.record("accounts", accounts_count as i64);
         json_span.record("wall_time", json_encode_ms.as_millis() as i64);
-        json_span.record("json_bytes", json_bytes);
+        json_span.record("json_bytes", json_bytes as i64);
         json_span.record("total_wall_time", gpa_global_start_time.elapsed().as_millis() as i64);
 
-        // Commit the accumulated `(pubkey, bytes)` pairs as the new cached query
-        gpa_processor.finalize_query();
+        // Commit the accumulated `(pubkey, bytes)` pairs as the new cached query.
+        let finalize_query_start_time = Instant::now();
+        json_span.in_scope(|| gpa_processor.finalize_query());
+        metrics::CLOUDBREAK_API_REQUEST_DURATION_MS.with_label_values(&["cache_finalize_query", gpa_processor.get_type()]).observe(finalize_query_start_time.elapsed().as_millis() as f64);
 
         // Close the JSON array
         yield Ok(Frame::data(Bytes::from(streaming_response_body_wrapper.end)));
@@ -248,17 +285,21 @@ fn process_first_gpa_batch(
 /// chunk and hand the merged `(pubkey, bytes)` set to the processor's
 /// accumulator. The `Range`s only stay valid until the next `split()`, so
 /// this must be called before reusing `buf`.
+///
+/// Returns the cache hits and cached bytes drained in this call so the caller
+/// can accumulate request-level totals.
 fn drain_pending_into_cache(
     frozen: &Bytes,
     pending_fresh: &mut Vec<(Pubkey, Range<usize>)>,
     pending_cached: &mut Vec<(Pubkey, Bytes)>,
     gpa_processor: &mut crate::modules::cache::GpaProcessor,
-) {
+) -> DrainStats {
     if pending_fresh.is_empty() && pending_cached.is_empty() {
-        return;
+        return DrainStats::default();
     }
 
     let cache_hits = pending_cached.len() as u64;
+    let cache_bytes: u64 = pending_cached.iter().map(|(_, b)| b.len() as u64).sum();
 
     let mut new_pairs: Vec<(Pubkey, Bytes)> =
         Vec::with_capacity(pending_fresh.len() + pending_cached.len());
@@ -271,6 +312,18 @@ fn drain_pending_into_cache(
     }
 
     gpa_processor.update_new_accounts_for_query(new_pairs, cache_hits);
+
+    DrainStats {
+        cache_hits,
+        cache_bytes,
+    }
+}
+
+/// Per-drain cache accounting, accumulated into request-level totals.
+#[derive(Default)]
+struct DrainStats {
+    cache_hits: u64,
+    cache_bytes: u64,
 }
 
 /// Contains the start and end of the JSON array (or context-wrapped value) and the id

@@ -148,6 +148,9 @@ pub async fn run(config: &str) -> CloudbreakResult<()> {
         .fill_gaps(db.clone(), config.clone(), indexer_state.clone())
         .await;
 
+    let _epoch_stakes_handle =
+        modules::epoch_stakes::spawn_epoch_stakes_recomputer(db.clone(), config.clone());
+
     operational_endpoints::self_healing::SELF_HEALING
         .set(indexer_state.self_healing_state.clone())
         .ok()

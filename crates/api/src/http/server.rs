@@ -78,8 +78,11 @@ impl HttpServer {
                     }
                 });
 
-                let connection_span =
-                    tracing::info_span!("http_connection", requests_in_connection = 0);
+                let connection_span = tracing::info_span!(
+                    "http_connection",
+                    requests_in_connection = 0,
+                    wall_time = tracing::field::Empty
+                );
 
                 if let Err(err) = auto::Builder::new(TokioExecutor::new())
                     .serve_connection(io, service)
@@ -93,6 +96,7 @@ impl HttpServer {
                     "requests_in_connection",
                     *requests_in_connection_clone.lock().unwrap(),
                 );
+                connection_span.record("wall_time", start_time.elapsed().as_millis() as i64);
 
                 metrics::CLOUDBREAK_API_REQUEST_DURATION_MS
                     .with_label_values(&["http_connection", "0"])
@@ -102,7 +106,7 @@ impl HttpServer {
     }
 }
 
-#[tracing::instrument(name = "http_request", skip_all, fields(json_bytes = tracing::field::Empty))]
+#[tracing::instrument(name = "http_request", parent = None, skip_all, fields(json_bytes = tracing::field::Empty))]
 async fn handle_request(
     req: Request<Incoming>,
     state: Arc<CloudbreakRpcState>,
@@ -123,7 +127,7 @@ async fn handle_request(
 
     let handler_response = match (req.method(), req.uri().path()) {
         (&Method::POST, "/") => rpc::handle_rpc_request(req, state, &subscription_id).await,
-        (&Method::GET, "/metrics") => metrics::metrics_handler()?,
+        (&Method::GET, "/metrics") => metrics::metrics_handler(&state.database)?,
         (&Method::GET, "/debug/log_filter") => operational_endpoints::log_filter_handler(&req)?,
         (&Method::GET, "/debug/modules/gpa_cache") => {
             operational_endpoints::gpa_cache_handler(&req, &state)?

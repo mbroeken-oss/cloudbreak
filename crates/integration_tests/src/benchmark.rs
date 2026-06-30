@@ -66,7 +66,7 @@ pub async fn run(args: &BenchmarkArgs) -> Result<()> {
     let requests_rx = sources::load_requests_from_source(&source, request_type).await?;
 
     let client = reqwest::Client::builder()
-        .pool_max_idle_per_host(0)
+        // .pool_max_idle_per_host(0)
         .timeout(Duration::from_secs(timeout_secs))
         .build()?;
 

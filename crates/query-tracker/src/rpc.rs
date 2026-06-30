@@ -3,9 +3,9 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use cloudbreak_core::modules::rpc_filter_type::RpcProgramAccountsConfig;
 use jsonrpsee::proc_macros::rpc;
 use serde::{Deserialize, Serialize};
-use solana_rpc_client_api::config::RpcProgramAccountsConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryTrackerStatus {
