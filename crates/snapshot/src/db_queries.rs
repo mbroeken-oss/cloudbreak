@@ -112,7 +112,7 @@ pub async fn create_database_indexes(
     if cfg.idx_snapshot_accounts_pubkey {
         db.execute_unprepared(
             r#"
-                CREATE INDEX idx_snapshot_accounts_pubkey ON snapshot_accounts USING HASH (pubkey);
+                CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_pubkey ON snapshot_accounts USING HASH (pubkey);
             "#,
         )
         .await?;
@@ -122,7 +122,7 @@ pub async fn create_database_indexes(
     if cfg.idx_snapshot_accounts_token_mint {
         db.execute_unprepared(
             r#"
-                CREATE INDEX idx_snapshot_accounts_token_mint
+                CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_token_mint
                 ON snapshot_accounts (token_mint)
                 WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
                 OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
@@ -133,7 +133,7 @@ pub async fn create_database_indexes(
 
         db.execute_unprepared(
             r#"
-                CREATE INDEX idx_snapshot_accounts_token_mint_latest
+                CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_token_mint_latest
                 ON snapshot_accounts (token_mint, slot DESC, pubkey)
                 WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
                 OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
@@ -146,7 +146,7 @@ pub async fn create_database_indexes(
     if cfg.idx_snapshot_accounts_token_owner {
         db.execute_unprepared(
             r#"
-                CREATE INDEX idx_snapshot_accounts_token_owner
+                CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_token_owner
                 ON snapshot_accounts (token_owner)
                 WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
                 OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
@@ -157,7 +157,7 @@ pub async fn create_database_indexes(
 
         db.execute_unprepared(
             r#"
-                CREATE INDEX idx_snapshot_accounts_token_owner_latest
+                CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_token_owner_latest
                 ON snapshot_accounts (token_owner, slot DESC, pubkey)
                 WHERE owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
                 OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea;
@@ -171,7 +171,7 @@ pub async fn create_database_indexes(
         // Used for the insertClosedAccount query (for looking for the latest version of the account)
         db.execute_unprepared(
             r#"
-                CREATE INDEX idx_snapshot_accounts_pubkey_slot ON snapshot_accounts (pubkey, slot DESC);
+                CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_pubkey_slot ON snapshot_accounts (pubkey, slot DESC);
             "#,
         )
         .await?;
@@ -181,7 +181,7 @@ pub async fn create_database_indexes(
     if cfg.idx_snapshot_accounts_token_delegate {
         db.execute_unprepared(
             r#"
-                CREATE INDEX idx_snapshot_accounts_token_delegate
+                CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_token_delegate
                 ON snapshot_accounts (SUBSTRING(data FROM 77 FOR 32))
                 WHERE (owner = '\x06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9'::bytea
                     OR owner = '\x06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfc'::bytea)
