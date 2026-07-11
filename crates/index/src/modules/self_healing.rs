@@ -87,10 +87,11 @@ impl SelfHealingState {
             .expect("Failed to lock last_slot_received");
 
         if slot <= last_slot_received {
-            tracing::warn!(
-                "Out of order slot received: {} - previous slot received: {}",
+            tracing::debug!(
+                target: "self_healing_late_block",
                 slot,
-                last_slot_received
+                last_slot_received,
+                "Late or duplicate block update ignored"
             );
 
             // If we had added the slot to gap tracking, remove it.
@@ -120,19 +121,10 @@ impl SelfHealingState {
             } else {
                 let new_gap_slots = ((last_slot_received + 1)..slot).collect::<Vec<_>>();
 
-                tracing::error!(
-                    target: "self_healing",
-                    "Confirmed slot gap: last received {} - new slot {} - parent_new_slot {} - queuing {} slots for repair",
-                    last_slot_received,
-                    slot,
-                    parent_slot,
-                    new_gap_slots.len()
-                );
-
                 if new_gap_slots.len() <= SMALL_GAP_MAX_SLOTS {
-                    tracing::warn!(
+                    tracing::debug!(
                         target: "self_healing_degraded",
-                        "Small confirmed gap detected ({} slot(s)); delaying unhealthy state for {:?} to allow reordered blocks to arrive",
+                        "Possible small stream reorder detected ({} slot(s)); waiting {:?} before classifying as a confirmed repair gap",
                         new_gap_slots.len(),
                         SMALL_GAP_HEALTH_GRACE
                     );
@@ -146,6 +138,15 @@ impl SelfHealingState {
                         snapshot_processing_state,
                     );
                 } else {
+                    tracing::error!(
+                        target: "self_healing",
+                        "Confirmed slot gap: last received {} - new slot {} - parent_new_slot {} - queuing {} slots for repair",
+                        last_slot_received,
+                        slot,
+                        parent_slot,
+                        new_gap_slots.len()
+                    );
+
                     // Large gaps are unlikely to be simple reordering, so pause immediately.
                     self.gaps_list
                         .lock()
