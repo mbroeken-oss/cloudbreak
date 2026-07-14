@@ -21,3 +21,8 @@ WHERE EXISTS (
         t2.pubkey = t1.pubkey
         AND t2.slot > t1.slot
 );
+
+CREATE INDEX accounts_to_delete_owner_pubkey_slot_idx
+ON accounts_to_delete (owner, pubkey, slot);
+
+ANALYZE accounts_to_delete;
