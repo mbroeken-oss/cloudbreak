@@ -130,6 +130,7 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
         config.processed_commitment,
         gpa_processor,
         config.genesis_hash.clone(),
+        config.health_max_slot_age_seconds,
         vote_accounts_supported,
         stakes_cache,
         max_multiple_accounts,

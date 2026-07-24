@@ -126,7 +126,9 @@ async fn process_single_request(
 
     let response_bytes: Vec<u8> = match method {
         "getHealth" => {
-            let healthy = db_query::get_service_health(&state.database).await;
+            let healthy =
+                db_query::get_service_health(&state.database, state.health_max_slot_age_seconds)
+                    .await;
 
             let result = if !healthy {
                 Err(RpcError::InternalError)

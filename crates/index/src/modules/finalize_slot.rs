@@ -651,13 +651,36 @@ impl UpdatedAccountsDuringStartup {
         slot: u64,
         config: &IndexConfig,
     ) {
-        if self.is_startup()
-            || self
-                .accounts
-                .lock()
-                .expect("Failed to lock accounts")
-                .is_empty()
+        let snapshot_state = *self
+            .snapshot_processing_state
+            .lock()
+            .expect("Failed to lock snapshot_processing_state");
+        if snapshot_state == SnapshotProcessingState::NotStarted
+            || snapshot_state == SnapshotProcessingState::Started
+            || snapshot_state == SnapshotProcessingState::FinishedAndCleanedUp
         {
+            return;
+        }
+
+        if self
+            .accounts
+            .lock()
+            .expect("Failed to lock accounts")
+            .is_empty()
+        {
+            let snapshot_processing_state = self.snapshot_processing_state.clone();
+            let health = self.health.clone();
+            tokio::spawn(async move {
+                tracing::info!(
+                    target: "cleanup_stored_accounts",
+                    "Startup snapshot processing completed with no stored accounts to clean"
+                );
+                *snapshot_processing_state
+                    .lock()
+                    .expect("Failed to lock snapshot_processing_state") =
+                    SnapshotProcessingState::FinishedAndCleanedUp;
+                health.remove_reason(HealthReason::Startup).await;
+            });
             return;
         }
 

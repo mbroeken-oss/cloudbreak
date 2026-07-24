@@ -540,6 +540,17 @@ pub struct ApiConfig {
     pub gpa_cache: Option<GpaCacheConfig>,
     #[serde(rename = "genesis-hash", default = "ApiConfig::default_genesis_hash")]
     pub genesis_hash: String,
+    #[serde(
+        rename = "health-max-slot-age-seconds",
+        default = "ApiConfig::default_health_max_slot_age_seconds"
+    )]
+    pub health_max_slot_age_seconds: u64,
+}
+
+impl ApiConfig {
+    const fn default_health_max_slot_age_seconds() -> u64 {
+        120
+    }
 }
 
 /// Config for the `cache` optional module for the API.
