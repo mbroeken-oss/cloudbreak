@@ -67,4 +67,18 @@ impl ServiceHealth {
             db_queries::update_service_health(&self.db, true).await;
         }
     }
+
+    /// Refreshes the health timestamp while the service is healthy. This lets the API fail closed
+    /// when the indexer stops advancing without relying on Solana block times being populated.
+    pub async fn refresh_if_healthy(&self) {
+        let healthy = self
+            .reasons
+            .lock()
+            .expect("Failed to lock health reasons")
+            .is_empty();
+
+        if healthy {
+            db_queries::update_service_health(&self.db, true).await;
+        }
+    }
 }

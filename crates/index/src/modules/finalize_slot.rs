@@ -474,6 +474,10 @@ async fn finalize_slot(
         &config_clone,
     )
     .await;
+    updated_accounts_during_startup
+        .health
+        .refresh_if_healthy()
+        .await;
 
     // These are accounts that were in the slot but did not have an older version (which means
     //  they are completely new to our db)
