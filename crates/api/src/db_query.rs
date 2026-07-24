@@ -50,34 +50,31 @@ pub async fn get_database_indexes(
         })
 }
 
-fn slot_block_time_is_fresh(now_timestamp: i64, block_time: i64, max_age_seconds: u64) -> bool {
+fn health_last_update_is_fresh(
+    now_timestamp: i64,
+    last_updated_at: chrono::NaiveDateTime,
+    max_age_seconds: u64,
+) -> bool {
     let Ok(max_age) = i64::try_from(max_age_seconds) else {
         return true;
     };
-    block_time > 0 && now_timestamp.saturating_sub(block_time) <= max_age
+    now_timestamp.saturating_sub(last_updated_at.and_utc().timestamp()) <= max_age
 }
 
-/// Gets the service health from the database and fails closed if slots are stale.
+/// Gets the service health from the database and fails closed if the health row is stale.
 pub async fn get_service_health(db: &DatabaseConnection, max_slot_age_seconds: u64) -> bool {
     let res = service_health::Entity::find_by_id(1)
         .one(db)
         .await
         .unwrap_or(None);
 
-    match res {
-        Some(res) if res.healthy => {}
-        _ => return false,
-    }
-
-    let latest_block_time = slots::Entity::find()
-        .order_by_desc(slots::Column::BlockTime)
-        .one(db)
-        .await
-        .unwrap_or(None)
-        .map(|slot| slot.block_time);
-
-    latest_block_time.is_some_and(|block_time| {
-        slot_block_time_is_fresh(Utc::now().timestamp(), block_time, max_slot_age_seconds)
+    res.is_some_and(|health| {
+        health.healthy
+            && health_last_update_is_fresh(
+                Utc::now().timestamp(),
+                health.last_updated_at,
+                max_slot_age_seconds,
+            )
     })
 }
 
@@ -106,21 +103,28 @@ pub async fn get_slot_data(db: &DatabaseConnection) -> Option<SlotSyncronizerDat
 
 #[cfg(test)]
 mod tests {
-    use super::slot_block_time_is_fresh;
+    use super::health_last_update_is_fresh;
+    use chrono::DateTime;
 
     #[test]
-    fn slot_block_time_is_fresh_when_inside_max_age() {
-        assert!(slot_block_time_is_fresh(1_000, 940, 120));
+    fn health_last_update_is_fresh_when_inside_max_age() {
+        let updated_at = DateTime::from_timestamp(940, 0).unwrap().naive_utc();
+
+        assert!(health_last_update_is_fresh(1_000, updated_at, 120));
     }
 
     #[test]
-    fn slot_block_time_is_not_fresh_when_outside_max_age() {
-        assert!(!slot_block_time_is_fresh(1_000, 800, 120));
+    fn health_last_update_is_not_fresh_when_outside_max_age() {
+        let updated_at = DateTime::from_timestamp(800, 0).unwrap().naive_utc();
+
+        assert!(!health_last_update_is_fresh(1_000, updated_at, 120));
     }
 
     #[test]
-    fn slot_block_time_is_not_fresh_when_missing() {
-        assert!(!slot_block_time_is_fresh(1_000, 0, 120));
+    fn health_last_update_accepts_unrepresentable_max_age_as_unbounded() {
+        let updated_at = DateTime::from_timestamp(0, 0).unwrap().naive_utc();
+
+        assert!(health_last_update_is_fresh(1_000, updated_at, u64::MAX));
     }
 }
 
