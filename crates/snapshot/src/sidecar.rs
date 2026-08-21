@@ -502,9 +502,7 @@ pub fn unpack_compressed_snapshot<P: Into<PathBuf>>(
             }
         };
 
-        if size != file_size {
-            tracing::warn!("size mismatch for id: {} and slot: {}", id, slot);
-        }
+        let size = normalized_account_file_len(slot, id, size, file_size);
 
         account_file_data.push(AccountFileData {
             path,
@@ -546,5 +544,52 @@ fn return_default_account_file_data(
         size: file_size,
         slot,
         write_version,
+    }
+}
+
+fn normalized_account_file_len(
+    slot: u64,
+    id: u64,
+    metadata_size: usize,
+    file_size: usize,
+) -> usize {
+    match metadata_size.cmp(&file_size) {
+        std::cmp::Ordering::Less => {
+            tracing::warn!(
+                "size mismatch for id: {} and slot: {} - metadata_size: {} - file_size: {} - using metadata_size",
+                id,
+                slot,
+                metadata_size,
+                file_size
+            );
+            metadata_size
+        }
+        std::cmp::Ordering::Equal => metadata_size,
+        std::cmp::Ordering::Greater => {
+            tracing::warn!(
+                "size mismatch for id: {} and slot: {} - metadata_size: {} - file_size: {} - clamping to file_size",
+                id,
+                slot,
+                metadata_size,
+                file_size
+            );
+            file_size
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_account_file_len;
+
+    #[test]
+    fn account_file_len_uses_metadata_when_it_fits() {
+        assert_eq!(normalized_account_file_len(10, 1, 512, 1024), 512);
+        assert_eq!(normalized_account_file_len(10, 1, 1024, 1024), 1024);
+    }
+
+    #[test]
+    fn account_file_len_clamps_metadata_that_exceeds_file() {
+        assert_eq!(normalized_account_file_len(10, 1, 312, 176), 176);
     }
 }
