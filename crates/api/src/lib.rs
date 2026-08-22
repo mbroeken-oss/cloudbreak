@@ -38,9 +38,7 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
         pg_opts.options([("statement_timeout", index_timeout.to_string())])
     });
 
-    let database = Database::connect(database_connect_options)
-        .await
-        .expect("Failed to create index listener database connection");
+    let database = connect_database_when_ready(database_connect_options).await?;
 
     let query_tracker_client: Option<QueryTrackerClient> = match &config.query_tracker_client {
         Some(qt_config) => {
@@ -175,6 +173,35 @@ async fn load_indexer_filter_when_ready(
                 attempts,
                 "Still waiting for indexer filter before serving API"
             );
+        }
+
+        attempts = attempts.saturating_add(1);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn connect_database_when_ready(
+    options: ConnectOptions,
+) -> cloudbreak_core::Result<DatabaseConnection> {
+    let mut attempts = 0u64;
+
+    loop {
+        match Database::connect(options.clone()).await {
+            Ok(database) => return Ok(database),
+            Err(err) => {
+                if attempts == 0 {
+                    warn!(
+                        error = ?err,
+                        "Database is not available yet; waiting before serving API"
+                    );
+                } else if attempts % 30 == 0 {
+                    warn!(
+                        attempts,
+                        error = ?err,
+                        "Still waiting for database before serving API"
+                    );
+                }
+            }
         }
 
         attempts = attempts.saturating_add(1);
