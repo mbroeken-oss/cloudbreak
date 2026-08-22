@@ -3,9 +3,9 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
-use cloudbreak_core::{ApiConfig, EnvironmentInfo, TryLoadConfig};
+use cloudbreak_core::{AccountSelectorConfig, ApiConfig, EnvironmentInfo, TryLoadConfig};
 use futures::future;
-use sea_orm::{ConnectOptions, Database};
+use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ use crate::{
     query_tracker_client::QueryTrackerClient,
 };
 use std::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 pub mod db_query;
 pub mod error;
@@ -72,11 +72,7 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
 
     let queries_timeout = Duration::from_secs(config.database.api_queries_timeout);
 
-    let indexer_filter = Arc::new(
-        EnvironmentInfo::load_filters(&database)
-            .await
-            .expect("Failed to load indexer filter"),
-    );
+    let indexer_filter = Arc::new(load_indexer_filter_when_ready(&database).await?);
     let batch_handling_max_concurrency = config.server.batch_handling_max_concurrency;
     let gpa_stream_batch_size = config.server.gpa_stream_batch_size;
     let request_timeout = config.server.request_timeout;
@@ -158,4 +154,30 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
     }
 
     Ok(())
+}
+
+async fn load_indexer_filter_when_ready(
+    database: &DatabaseConnection,
+) -> cloudbreak_core::Result<AccountSelectorConfig> {
+    let mut attempts = 0u64;
+
+    loop {
+        if let Some(filters) = EnvironmentInfo::try_load_filters(database).await? {
+            return Ok(filters);
+        }
+
+        if attempts == 0 {
+            warn!(
+                "Indexer filter is not available yet; waiting for indexer startup before serving API"
+            );
+        } else if attempts % 30 == 0 {
+            warn!(
+                attempts,
+                "Still waiting for indexer filter before serving API"
+            );
+        }
+
+        attempts = attempts.saturating_add(1);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }

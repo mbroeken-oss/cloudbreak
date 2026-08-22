@@ -166,11 +166,31 @@ impl EnvironmentInfo {
                 DatabaseBackend::Postgres,
                 "SELECT mode, programs FROM environment_info WHERE id = 1".to_string(),
             ))
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!("environment_info row not found; has the indexer run?")
-            })?;
+            .await?;
 
+        Self::filters_from_environment_row(row)?
+            .ok_or_else(|| anyhow::anyhow!("environment_info row not found; has the indexer run?"))
+    }
+
+    pub async fn try_load_filters(
+        db: &DatabaseConnection,
+    ) -> Result<Option<AccountSelectorConfig>> {
+        let row = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "SELECT mode, programs FROM environment_info WHERE id = 1".to_string(),
+            ))
+            .await?;
+
+        Self::filters_from_environment_row(row)
+    }
+
+    fn filters_from_environment_row(
+        row: Option<sea_orm::QueryResult>,
+    ) -> Result<Option<AccountSelectorConfig>> {
+        let Some(row) = row else {
+            return Ok(None);
+        };
         let mode: String = row.try_get("", "mode")?;
         let programs: String = row.try_get("", "programs")?;
         let programs = programs
@@ -180,7 +200,7 @@ impl EnvironmentInfo {
             .map(|s| Pubkey::from_str(s).map(PubkeyDef))
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        Ok(match mode.as_str() {
+        Ok(Some(match mode.as_str() {
             "include" => AccountSelectorConfig {
                 include: programs,
                 exclude: Vec::new(),
@@ -190,7 +210,7 @@ impl EnvironmentInfo {
                 exclude: programs,
             },
             other => anyhow::bail!("Invalid filter mode: {}", other),
-        })
+        }))
     }
 
     pub async fn upsert_grpc_version(db: &DatabaseConnection, version: &str) -> Result<()> {
