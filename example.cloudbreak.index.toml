@@ -20,7 +20,7 @@ endpoint = "http://localhost:8458"
 [database]
 url = "postgres://cloudbreak:cloudbreak@localhost:5432/cloudbreak"
 # Keep enough pool capacity for snapshot ingestion without saturating storage.
-max-connections = 24
+max-connections = 16
 min-connections = 1
 connect-timeout = "30s"
 idle-timeout = "10m"
