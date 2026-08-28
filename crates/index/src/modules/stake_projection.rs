@@ -45,7 +45,7 @@ async fn refresh_if_needed(db: &DatabaseConnection) -> anyhow::Result<()> {
     if !service_healthy(db).await {
         return Ok(());
     }
-    let Some(context_slot) = finalized_slot(db).await else {
+    let Some((context_slot, block_time)) = finalized_context(db).await else {
         return Ok(());
     };
     if active_context_slot(db).await? >= Some(context_slot) {
@@ -54,6 +54,15 @@ async fn refresh_if_needed(db: &DatabaseConnection) -> anyhow::Result<()> {
 
     let generation = next_generation(db).await?;
     let started = std::time::Instant::now();
+    // A failed off-path build has no status row, so remove its incomplete
+    // generation before retrying the same generation number.
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "DELETE FROM stake_accounts_current WHERE generation >= $1",
+        [generation.into()],
+    ))
+    .await?;
+
     db.execute(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
@@ -84,7 +93,7 @@ async fn refresh_if_needed(db: &DatabaseConnection) -> anyhow::Result<()> {
 
     // Audit the complete new generation before publishing it. If the audit fails,
     // readers continue using the prior finalized generation.
-    compute_non_circulating_audit(db, generation, context_slot).await?;
+    compute_non_circulating_audit(db, generation, context_slot, block_time).await?;
 
     db.execute(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -134,17 +143,19 @@ async fn service_healthy(db: &DatabaseConnection) -> bool {
     .unwrap_or(false)
 }
 
-async fn finalized_slot(db: &DatabaseConnection) -> Option<u64> {
-    db.query_one(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        "SELECT slot FROM slots WHERE commitment = $1",
-        [(CommitmentLevel::Finalized as i32).into()],
-    ))
-    .await
-    .ok()
-    .flatten()
-    .and_then(|row| row.try_get::<i64>("", "slot").ok())
-    .and_then(|slot| slot.try_into().ok())
+async fn finalized_context(db: &DatabaseConnection) -> Option<(u64, i64)> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT slot, block_time FROM slots WHERE commitment = $1",
+            [(CommitmentLevel::Finalized as i32).into()],
+        ))
+        .await
+        .ok()
+        .flatten()?;
+    let slot: i64 = row.try_get("", "slot").ok()?;
+    let block_time: i64 = row.try_get("", "block_time").ok()?;
+    Some((slot.try_into().ok()?, block_time))
 }
 
 async fn active_context_slot(db: &DatabaseConnection) -> anyhow::Result<Option<u64>> {
@@ -179,19 +190,8 @@ async fn compute_non_circulating_audit(
     db: &DatabaseConnection,
     generation: i64,
     context_slot: u64,
+    block_time: i64,
 ) -> anyhow::Result<()> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DatabaseBackend::Postgres,
-            "SELECT block_time FROM slots WHERE commitment = $1 AND slot = $2",
-            [
-                (CommitmentLevel::Finalized as i32).into(),
-                (context_slot as i64).into(),
-            ],
-        ))
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("missing finalized block time"))?;
-    let block_time: i64 = row.try_get("", "block_time")?;
     // Match Agave's Clock epoch, including the historical warmup schedule.
     let epoch = EpochSchedule::default().get_epoch(context_slot);
     let static_accounts: HashSet<Pubkey> = non_circulating_accounts().into_iter().collect();
