@@ -69,6 +69,10 @@ Indexes:
 
 The raw account tables remain the source for encoded account data. The projection is an API/search structure and future input to a non-circulating-supply materialization.
 
+### Implemented projection slice
+
+The first implementation materializes a **generationed rooted copy** of the latest Stake-account rows (`pubkey`, `slot`, `lamports`, `data`) rather than parsing every field into columns. The indexer builds a complete new generation from accounts at or below the finalized slot, atomically points `stake_projection_status` at it, and retains the preceding generation for in-flight pagination safety. `getStakeAccounts` reads that projection with keyset pagination. Decoded state/authority/lockup/delegation columns and the incremental non-circulating aggregate remain the next slice.
+
 ### B. `getStakeAccounts` extension
 
 `getStakeAccounts` is a Cloudbreak extension; Solana-compatible callers should continue to use `getProgramAccounts` for Stake-program semantics.

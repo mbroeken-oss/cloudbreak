@@ -13,3 +13,4 @@ pub mod panic_handler;
 pub mod save_block;
 pub mod self_healing;
 pub mod snapshot;
+pub mod stake_projection;

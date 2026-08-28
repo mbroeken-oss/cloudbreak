@@ -150,6 +150,8 @@ pub async fn run(config: &str) -> CloudbreakResult<()> {
 
     let _epoch_stakes_handle =
         modules::epoch_stakes::spawn_epoch_stakes_recomputer(db.clone(), config.clone());
+    let _stake_projection_handle =
+        modules::stake_projection::spawn_stake_projection_rebuilder(db.clone(), config.clone());
 
     operational_endpoints::self_healing::SELF_HEALING
         .set(indexer_state.self_healing_state.clone())

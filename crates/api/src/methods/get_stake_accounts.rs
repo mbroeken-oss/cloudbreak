@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Bounded rooted discovery of Stake-program accounts.
+//! Bounded rooted discovery of materialized Stake-program accounts.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use cloudbreak_core::STAKE_PROGRAM_ID;
@@ -63,9 +63,28 @@ pub async fn get_stake_accounts(
         ));
     }
 
-    let (context_slot, _) = state
-        .latest_slot_and_block_time(CommitmentLevel::Finalized)
-        .await?;
+    let projection = state
+        .database
+        .query_one(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT generation, context_slot FROM stake_projection_status WHERE id = 1".to_string(),
+        ))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "getStakeAccounts projection status query failed");
+            RpcError::InternalError
+        })?
+        .ok_or_else(|| state.node_unhealthy())?;
+    let generation: i64 = projection
+        .try_get("", "generation")
+        .map_err(|_| RpcError::InternalError)?;
+    let context_slot: i64 = projection
+        .try_get("", "context_slot")
+        .map_err(|_| RpcError::InternalError)?;
+    let context_slot: u64 = context_slot
+        .try_into()
+        .map_err(|_| RpcError::InternalError)?;
+
     if let Some(min_context_slot) = config.min_context_slot
         && context_slot < min_context_slot
     {
@@ -86,38 +105,21 @@ pub async fn get_stake_accounts(
         .query_all(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
-            WITH latest AS (
-                SELECT DISTINCT ON (pubkey) pubkey, lamports, data
-                FROM (
-                    SELECT pubkey, slot, lamports, data
-                    FROM accounts
-                    WHERE owner = $1 AND slot <= $2 AND pubkey > $3
-                    UNION ALL
-                    SELECT pubkey, slot, lamports, data
-                    FROM snapshot_accounts
-                    WHERE owner = $1 AND slot <= $2 AND pubkey > $3
-                ) AS versions
-                ORDER BY pubkey ASC, slot DESC
-            )
             SELECT pubkey, lamports, data
-            FROM latest
-            WHERE lamports > 0
+            FROM stake_accounts_current
+            WHERE generation = $1 AND pubkey > $2
             ORDER BY pubkey ASC
-            LIMIT $4
+            LIMIT $3
             "#,
-            [
-                STAKE_PROGRAM_ID.to_bytes().to_vec().into(),
-                (context_slot as i64).into(),
-                cursor.into(),
-                (limit as i64 + 1).into(),
-            ],
+            [generation.into(), cursor.into(), (limit as i64 + 1).into()],
         ))
         .await
         .map_err(|error| {
-            tracing::error!(%error, "getStakeAccounts query failed");
+            tracing::error!(%error, "getStakeAccounts projection page query failed");
             RpcError::InternalError
         })?;
 
+    let has_more = rows.len() > limit as usize;
     let mut accounts = Vec::with_capacity(limit as usize);
     let mut last_pubkey = None;
     for row in rows.into_iter().take(limit as usize) {
@@ -139,37 +141,6 @@ pub async fn get_stake_accounts(
             data: STANDARD.encode(data),
         });
     }
-    let has_more = accounts.len() == limit as usize
-        && state
-            .database
-            .query_one(Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                r#"
-                WITH latest AS (
-                    SELECT DISTINCT ON (pubkey) pubkey, lamports
-                    FROM (
-                        SELECT pubkey, slot, lamports FROM accounts
-                        WHERE owner = $1 AND slot <= $2 AND pubkey > $3
-                        UNION ALL
-                        SELECT pubkey, slot, lamports FROM snapshot_accounts
-                        WHERE owner = $1 AND slot <= $2 AND pubkey > $3
-                    ) AS versions
-                    ORDER BY pubkey ASC, slot DESC
-                )
-                SELECT pubkey FROM latest WHERE lamports > 0 ORDER BY pubkey ASC LIMIT 1
-                "#,
-                [
-                    STAKE_PROGRAM_ID.to_bytes().to_vec().into(),
-                    (context_slot as i64).into(),
-                    last_pubkey
-                        .map(|pubkey| pubkey.to_bytes().to_vec())
-                        .unwrap_or_default()
-                        .into(),
-                ],
-            ))
-            .await
-            .map_err(|_| RpcError::InternalError)?
-            .is_some();
 
     Ok(RpcResponse {
         context: RpcResponseContext {
