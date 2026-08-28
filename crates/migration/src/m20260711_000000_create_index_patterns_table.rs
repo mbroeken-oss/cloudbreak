@@ -49,7 +49,7 @@ use sea_orm_migration::prelude::*;
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 
-const CREATE_SQL: &str = "\
+pub(crate) const CREATE_SQL: &str = "\
 CREATE TABLE IF NOT EXISTS index_patterns (
     pattern_id        TEXT PRIMARY KEY,
     program           BYTEA NOT NULL,
