@@ -5,6 +5,10 @@ accounts-owner-map-enabled = false
 [snapshot]
 # Limit parallel archive readers so PostgreSQL retains I/O headroom for live indexing.
 accounts-file-concurency = 4
+# Max consecutive gap-filling iterations allowed to fail fetching a covering
+# snapshot from the tracker before the indexer gives up and exits. Resets on the
+# first successful fetch. (~30s per attempt.)
+gap-fill-max-snapshot-retries = 10
 
 [snapshot.pg-indexes]
 idx_snapshot_accounts_pubkey = false
@@ -45,6 +49,12 @@ max-chunk-bytes-data = 2097152
 max-grpc-errors = 10
 # The buffer size for queuing subscription events
 channel-size = 1000
+# How long to keep retrying (re)connection/subscription before giving up and panicking
+reconnect-give-up = "600s"
+# Delay between (re)connection/subscription attempts
+reconnect-backoff = "5s"
+# How long a reconnection keeps replaying from the last received slot before dropping from_slot
+reconnect-from-slot-retain = "300s"
 
 [metrics]
 host = "0.0.0.0"

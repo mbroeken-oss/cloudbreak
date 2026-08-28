@@ -3,6 +3,7 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use agave_fs::FileInfo;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cloudbreak_core::{AccountSelectorConfig, DatabaseConfig, TryLoadConfig};
@@ -299,9 +300,8 @@ fn scan_to_prefix_files(
         }
 
         let af = AccountsFile::new_for_startup(
-            &file_data.path,
-            file_data.size,
-            solana_accounts_db::accounts_file::StorageAccess::default(),
+            FileInfo::new_from_path(&file_data.path)
+                .map_err(|e| anyhow::anyhow!("{:?}: {:?}", file_data.path, e))?,
         )
         .map_err(|e| anyhow::anyhow!("{:?}: {:?}", file_data.path, e))?;
 

@@ -21,10 +21,8 @@ use async_stream::try_stream;
 use cloudbreak_core::modules::rpc_filter_type::{
     RpcProgramAccountsConfig, account_matches_value_cmps, has_value_cmp,
 };
-use cloudbreak_entity::slots;
 use futures::{Stream, StreamExt};
 use rust_decimal::prelude::ToPrimitive;
-use sea_orm::EntityTrait;
 use sea_orm::sqlx::postgres::PgRow;
 use sea_orm::sqlx::{self, Row};
 use solana_account::AccountSharedData;
@@ -96,27 +94,7 @@ pub async fn get_program_accounts(
         .transpose()?
         .unwrap_or(CommitmentLevel::Finalized);
 
-    // If the slot syncronizer is enabled, use the cached slot data, otherwise query the database
-    let (latest_slot, block_time) = match &state.slot_syncronizer_data {
-        Some(data) => {
-            let data = data.read().expect("Failed to read slot syncronizer data");
-
-            (
-                data.get_slot_for_commitment(commitment),
-                data.get_block_time_for_commitment(commitment),
-            )
-        }
-        None => {
-            let slot_model = slots::Entity::find_by_id(commitment as i32)
-                .one(&state.database)
-                .instrument(tracing::info_span!("slot_db"))
-                .await?;
-
-            let model = slot_model.ok_or(RpcError::InternalError)?;
-
-            (model.slot as u64, model.block_time)
-        }
-    };
+    let (latest_slot, block_time) = state.latest_slot_and_block_time(commitment).await?;
 
     let context_slot = if let Some(with_context) = config.with_context {
         if with_context {
@@ -207,11 +185,6 @@ pub async fn get_program_accounts(
                 }
             }
         }
-    }
-
-    // Buffer query for batch submission to remote query tracker (if enabled)
-    if let Some(client) = &state.query_tracker_client {
-        client.buffer_query(program, Some(config.clone()));
     }
 
     if let Some(ref filters) = config.filters {
@@ -338,7 +311,7 @@ fn gpa_db_query(
     let parent_span = tracing::Span::current();
     tokio::spawn(async move {
         let db_query = async {
-            let mut db_query_total_ms = Duration::from_millis(0);
+            let mut db_query_total_time = Duration::from_millis(0);
             let mut db_first_row_time = Duration::from_millis(0);
 
             let db_span = tracing::info_span!(
@@ -376,7 +349,7 @@ fn gpa_db_query(
                     rows.next().instrument(db_span.clone()).await
                 };
 
-                db_query_total_ms += before.elapsed();
+                db_query_total_time += before.elapsed();
 
                 let Some(row) = next_row else { break };
 
@@ -384,6 +357,16 @@ fn gpa_db_query(
                     Ok(r) => r,
                     Err(e) => {
                         tracing::error!("Database query error: {}", e);
+                        // Record the failed query too: a pattern that errors out
+                        // mid-stream is still real demand for an index.
+                        if let Some(client) = &input.state.query_tracker_client {
+                            client.buffer_query(
+                                input.program,
+                                Some(input.config.clone()),
+                                db_query_total_time.as_micros() as u64,
+                                true,
+                            );
+                        }
                         let _ = tx.send(Err(RpcError::InternalError));
                         return;
                     }
@@ -405,16 +388,36 @@ fn gpa_db_query(
                 let _ = tx.send(Ok(batch));
             }
 
+            if let Some(client) = &input.state.query_tracker_client {
+                client.buffer_query(
+                    input.program,
+                    Some(input.config.clone()),
+                    db_query_total_time.as_micros() as u64,
+                    false,
+                );
+            }
+
             // Record db metrics
             metrics_data_clone.set_db_metrics(
-                db_query_total_ms.as_millis() as f64,
+                db_query_total_time.as_millis() as f64,
                 db_first_row_time.as_millis() as f64,
             );
-            db_span.record("wall_time", db_query_total_ms.as_millis() as i64);
+            db_span.record("wall_time", db_query_total_time.as_millis() as i64);
         };
 
         if timeout(queries_timeout, db_query).await.is_err() {
             tracing::error!("Database streaming query timed out");
+            // A timed-out query is strong demand for an index (it currently
+            // cannot be served); record it with the timeout budget as the cost
+            // estimate so it can be prioritized for creation.
+            if let Some(client) = &input.state.query_tracker_client {
+                client.buffer_query(
+                    input.program,
+                    Some(input.config.clone()),
+                    queries_timeout.as_micros() as u64,
+                    true,
+                );
+            }
             let _ = tx.send(Err(RpcError::InternalError));
         }
     });

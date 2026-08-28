@@ -10,11 +10,11 @@ use std::{
 };
 
 use cloudbreak_core::{IndexConfig, modules::account_owner_map::AccountOwnerMap};
-use cloudbreak_entity::{accounts, service_health, slots};
+use cloudbreak_entity::{accounts, slots};
 use sea_orm::{
-    ActiveValue::{NotSet, Set},
-    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    Statement, Value,
+    ActiveValue::Set,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseBackend, DatabaseConnection, EntityTrait,
+    QueryFilter, Statement, Value,
     prelude::Expr,
     sea_query::{Alias, OnConflict},
 };
@@ -39,39 +39,21 @@ fn is_deadlock<T>(result: &Result<T, sea_orm::DbErr>) -> bool {
 ///  to unhealthy when we get a slot gap.
 ///
 /// By default we set the service as unhealthy on migration.
+///
+/// The authoritative `service_health` row and the denormalised `slots.health` flag are written
+/// in a single transaction so they can never diverge.
 pub async fn update_service_health(db: &DatabaseConnection, healthy: bool) {
-    let query = service_health::Entity::insert(service_health::ActiveModel {
-        id: Set(1), //It will always write to the one default record
-        healthy: Set(healthy),
-        last_updated_at: NotSet,
-    })
-    .on_conflict(
-        OnConflict::columns([service_health::Column::Id])
-            .update_columns([
-                service_health::Column::Healthy,
-                service_health::Column::LastUpdatedAt,
-            ])
-            .to_owned(),
-    )
-    .exec_without_returning(db);
-
-    let result = timeout(Duration::from_secs(30), query)
-        .await
-        .unwrap_or_else(|elapsed| {
-            tracing::error!("update_service_health timeout ERROR: {}", elapsed);
-            metrics::increment_db_errors();
-            Err(sea_orm::DbErr::RecordNotInserted)
-        });
-
-    match result {
-        Ok(result) => {
-            tracing::debug!("update_service_health: updated service health: {}", result);
+    // The atomic upsert now lives in `core` so every service shares it; keep the
+    // indexer's fire-and-forget logging and db-error metric here.
+    match cloudbreak_core::modules::service_health::update_service_health(db, healthy).await {
+        Ok(()) => {
+            tracing::debug!(
+                "update_service_health: updated service + slots health to {}",
+                healthy
+            );
         }
         Err(e) => {
-            tracing::error!(
-                "update_service_health: failed to update service health: {}",
-                e
-            );
+            tracing::error!("update_service_health: failed to update health: {}", e);
             metrics::increment_db_errors();
         }
     }
@@ -359,6 +341,7 @@ pub async fn insert_slot(
     slot: u64,
     block_time: Option<UnixTimestamp>,
     commitment: CommitmentLevel,
+    healthy: bool,
     db: &DatabaseConnection,
     config: &IndexConfig,
 ) {
@@ -370,6 +353,11 @@ pub async fn insert_slot(
         slot: Set(slot as i64),
         commitment: Set(commitment as i32),
         block_time: Set(block_time),
+        // Stamp the current health so a freshly inserted row is consistent with the
+        // live health state even if it is created after the last health transition.
+        // `update_service_health` remains the sole authority for transitions on
+        // existing rows, so we never clobber `health` on conflict.
+        health: Set(healthy),
     })
     .on_conflict(
         OnConflict::columns([slots::Column::Commitment])
@@ -398,6 +386,58 @@ pub async fn insert_slot(
             tracing::error!("insert_slot: failed to insert slot {}: {}", slot, e);
             metrics::increment_db_errors();
         }
+    }
+}
+
+/// Retained window of `recent_blockhashes` rows (~5 minutes of slots at mainnet cadence).
+const RECENT_BLOCKHASH_RETENTION_SLOTS: u64 = 900;
+
+/// Records a block's blockhash for simulation's blockhash-age check, pruning older rows.
+pub async fn insert_recent_blockhash(
+    slot: u64,
+    blockhash: String,
+    block_height: Option<u64>,
+    db: &DatabaseConnection,
+    config: &IndexConfig,
+) {
+    if blockhash.is_empty() {
+        return;
+    }
+
+    let query_timeout = Duration::from_secs(config.database.finalize_slot_queries_timeout);
+    let prune_before = slot.saturating_sub(RECENT_BLOCKHASH_RETENTION_SLOTS) as i64;
+
+    let insert = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "INSERT INTO recent_blockhashes (slot, blockhash, block_height) VALUES ($1, $2, $3) \
+         ON CONFLICT (slot) DO UPDATE SET blockhash = EXCLUDED.blockhash, \
+         block_height = EXCLUDED.block_height",
+        [
+            Value::from(slot as i64),
+            Value::from(blockhash),
+            Value::from(block_height.map(|h| h as i64)),
+        ],
+    );
+    let prune = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "DELETE FROM recent_blockhashes WHERE slot < $1",
+        [Value::from(prune_before)],
+    );
+
+    let result = timeout(query_timeout, async {
+        db.execute(insert).await?;
+        db.execute(prune).await?;
+        Ok::<(), sea_orm::DbErr>(())
+    })
+    .await
+    .unwrap_or_else(|elapsed| {
+        tracing::error!("insert_recent_blockhash timeout ERROR: {}", elapsed);
+        Err(sea_orm::DbErr::RecordNotInserted)
+    });
+
+    if let Err(e) = result {
+        tracing::error!("insert_recent_blockhash: failed for slot {}: {}", slot, e);
+        metrics::increment_db_errors();
     }
 }
 

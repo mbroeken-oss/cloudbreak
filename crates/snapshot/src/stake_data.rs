@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 
 use solana_pubkey::Pubkey;
-#[allow(deprecated)]
-use solana_runtime::epoch_stakes::VersionedEpochStakes;
 
-use crate::accountsdb_helpers::DeserializableVersionedBank;
+use crate::accountsdb_helpers::{DeserializableVersionedBank, DeserializableVersionedEpochStakes};
 
 /// Per-snapshot stake data extracted from `DeserializableVersionedBank`.
 /// This is what Agave's `getVoteAccounts` uses for the two non-account-derived
@@ -27,7 +25,7 @@ pub struct VoterStakeRow {
 #[allow(deprecated)]
 pub fn extract_stake_data(
     bank: &DeserializableVersionedBank,
-    versioned_epoch_stakes: &HashMap<u64, VersionedEpochStakes>,
+    versioned_epoch_stakes: &HashMap<u64, DeserializableVersionedEpochStakes>,
 ) -> SnapshotStakeData {
     let epoch = bank.epoch;
 
@@ -35,7 +33,6 @@ pub fn extract_stake_data(
         .get(&epoch)
         .map(|epoch_stakes| {
             epoch_stakes
-                .stakes()
                 .vote_accounts()
                 .iter()
                 .map(|(pubkey, _)| *pubkey)
@@ -43,7 +40,7 @@ pub fn extract_stake_data(
         })
         .unwrap_or_default();
 
-    let vote_accounts = bank.stakes.vote_accounts();
+    let vote_accounts = &bank.stakes.vote_accounts;
     let mut voters = Vec::with_capacity(vote_accounts.len());
     for (vote_pubkey, stake) in vote_accounts.delegated_stakes() {
         let Some(vote_account) = vote_accounts.get(vote_pubkey) else {

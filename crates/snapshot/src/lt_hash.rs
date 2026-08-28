@@ -3,6 +3,7 @@
  * Copyright 2025-2026 Triton One Limited. All rights reserved.
  */
 
+use agave_fs::FileInfo;
 use anyhow::{Context, Result};
 use cloudbreak_core::AccountSelectorConfig;
 use solana_accounts_db::accounts_file::AccountsFile;
@@ -60,14 +61,13 @@ fn for_each_deduplicated_snapshot_account(
             );
         }
 
-        let accounts_file = AccountsFile::new_for_startup(
-            &file_data.path,
-            file_data.size,
-            solana_accounts_db::accounts_file::StorageAccess::default(),
-        )
-        .map_err(|e| {
-            anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e)
-        })?;
+        let accounts_file =
+            AccountsFile::new_for_startup(FileInfo::new_from_path(&file_data.path).map_err(
+                |e| anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e),
+            )?)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e)
+            })?;
 
         let mut offsets = Vec::new();
         accounts_file
@@ -104,14 +104,13 @@ fn for_each_deduplicated_snapshot_account(
             );
         }
 
-        let accounts_file = AccountsFile::new_for_startup(
-            &file_data.path,
-            file_data.size,
-            solana_accounts_db::accounts_file::StorageAccess::default(),
-        )
-        .map_err(|e| {
-            anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e)
-        })?;
+        let accounts_file =
+            AccountsFile::new_for_startup(FileInfo::new_from_path(&file_data.path).map_err(
+                |e| anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e),
+            )?)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e)
+            })?;
 
         let mut offsets = Vec::new();
         accounts_file
@@ -205,14 +204,13 @@ pub fn compute_snapshot_lt_hash_filtered_single_pass(
             );
         }
 
-        let accounts_file = AccountsFile::new_for_startup(
-            &file_data.path,
-            file_data.size,
-            solana_accounts_db::accounts_file::StorageAccess::default(),
-        )
-        .map_err(|e| {
-            anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e)
-        })?;
+        let accounts_file =
+            AccountsFile::new_for_startup(FileInfo::new_from_path(&file_data.path).map_err(
+                |e| anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e),
+            )?)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to open account file {:?}: {:?}", file_data.path, e)
+            })?;
 
         let mut offsets = Vec::new();
         accounts_file
