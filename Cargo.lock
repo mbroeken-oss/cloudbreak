@@ -1611,6 +1611,7 @@ dependencies = [
  "solana-rent 4.3.0",
  "solana-rpc-client-api",
  "solana-sdk-ids",
+ "solana-stake-interface",
  "solana-svm",
  "solana-svm-callback",
  "solana-svm-feature-set",

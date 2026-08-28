@@ -31,6 +31,7 @@ cloudbreak-entity = { workspace = true }
 serde_json = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-vote-interface = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-account = { workspace = true }

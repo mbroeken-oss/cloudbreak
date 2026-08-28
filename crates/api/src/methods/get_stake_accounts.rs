@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use solana_commitment_config::CommitmentLevel;
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::response::{Response as RpcResponse, RpcResponseContext};
+use solana_stake_interface::state::StakeStateV2;
 
 use crate::{error::RpcError, http::CloudbreakRpcState, methods::resolve_commitment};
 
@@ -36,9 +37,36 @@ pub struct GetStakeAccountsValue {
 pub struct StakeAccountSummary {
     pub pubkey: String,
     pub lamports: u64,
+    /// `uninitialized`, `initialized`, `delegated`, `rewardsPool`, or `unknown`.
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staker_authority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub withdraw_authority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lockup: Option<StakeLockup>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<StakeDelegation>,
     /// Base64-encoded stake account data. Consumers needing program-account
     /// wire compatibility should use getProgramAccounts(Stake111...).
     pub data: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StakeLockup {
+    pub unix_timestamp: i64,
+    pub epoch: u64,
+    pub custodian: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StakeDelegation {
+    pub vote_pubkey: String,
+    pub stake: u64,
+    pub activation_epoch: u64,
+    pub deactivation_epoch: u64,
 }
 
 pub async fn get_stake_accounts(
@@ -135,11 +163,11 @@ pub async fn get_stake_accounts(
         let pubkey =
             Pubkey::try_from(pubkey_bytes.as_slice()).map_err(|_| RpcError::InternalError)?;
         last_pubkey = Some(pubkey);
-        accounts.push(StakeAccountSummary {
-            pubkey: pubkey.to_string(),
-            lamports: lamports.try_into().map_err(|_| RpcError::InternalError)?,
-            data: STANDARD.encode(data),
-        });
+        accounts.push(summarize_account(
+            pubkey,
+            lamports.try_into().map_err(|_| RpcError::InternalError)?,
+            data,
+        ));
     }
 
     Ok(RpcResponse {
@@ -171,6 +199,52 @@ fn decode_cursor(cursor: Option<&str>) -> Result<Vec<u8>, RpcError> {
 
 fn encode_cursor(pubkey: Pubkey) -> String {
     bs58::encode(pubkey.as_ref()).into_string()
+}
+
+fn summarize_account(pubkey: Pubkey, lamports: u64, data: Vec<u8>) -> StakeAccountSummary {
+    let mut summary = StakeAccountSummary {
+        pubkey: pubkey.to_string(),
+        lamports,
+        state: "unknown".to_string(),
+        staker_authority: None,
+        withdraw_authority: None,
+        lockup: None,
+        delegation: None,
+        data: STANDARD.encode(&data),
+    };
+
+    let Ok(stake_state) = bincode::deserialize::<StakeStateV2>(&data) else {
+        return summary;
+    };
+    match stake_state {
+        StakeStateV2::Uninitialized => summary.state = "uninitialized".to_string(),
+        StakeStateV2::RewardsPool => summary.state = "rewardsPool".to_string(),
+        StakeStateV2::Initialized(meta) => {
+            summary.state = "initialized".to_string();
+            populate_meta(&mut summary, meta);
+        }
+        StakeStateV2::Stake(meta, stake, _) => {
+            summary.state = "delegated".to_string();
+            populate_meta(&mut summary, meta);
+            summary.delegation = Some(StakeDelegation {
+                vote_pubkey: stake.delegation.voter_pubkey.to_string(),
+                stake: stake.delegation.stake,
+                activation_epoch: stake.delegation.activation_epoch,
+                deactivation_epoch: stake.delegation.deactivation_epoch,
+            });
+        }
+    }
+    summary
+}
+
+fn populate_meta(summary: &mut StakeAccountSummary, meta: solana_stake_interface::state::Meta) {
+    summary.staker_authority = Some(meta.authorized.staker.to_string());
+    summary.withdraw_authority = Some(meta.authorized.withdrawer.to_string());
+    summary.lockup = Some(StakeLockup {
+        unix_timestamp: meta.lockup.unix_timestamp,
+        epoch: meta.lockup.epoch,
+        custodian: meta.lockup.custodian.to_string(),
+    });
 }
 
 #[cfg(test)]
