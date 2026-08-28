@@ -168,7 +168,11 @@ A native Cloudbreak `getSupply` implementation requires one of:
 1. a versioned internal Sentinel feed that publishes `(root_slot, capitalization)`; or
 2. a global Cloudbreak balance index that tracks every live account's lamports through snapshots and updates.
 
-The first is strongly preferred. It avoids duplicating a large all-account database solely to maintain one aggregate. That work is intentionally outside this implementation slice.
+The first is strongly preferred. It avoids duplicating a large all-account database solely to maintain one aggregate.
+
+### Implemented rooted audit
+
+Cloudbreak now computes and persists a rooted `stake_supply_audits` record each time it publishes a Stake projection generation. It uses Agave's current non-circulating static-account and withdrawal-authority lists, evaluates lockups against the projection's finalized block time and epoch, and records a local non-circulating lamport total plus account count. This is an audit/proof input only: public `getSupply` continues to serve the exact canonical cache, rather than combining independently sampled totals and components from different slots.
 
 ## Data-flow and lifecycle
 

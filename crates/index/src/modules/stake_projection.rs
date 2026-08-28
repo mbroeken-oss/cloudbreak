@@ -7,8 +7,15 @@
 //! cannot observe an empty page during a generation switch.
 
 use cloudbreak_core::{IndexConfig, STAKE_PROGRAM_ID};
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use futures::TryStreamExt;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, StreamTrait};
+use solana_pubkey::Pubkey;
+use solana_runtime::non_circulating_supply::{non_circulating_accounts, withdraw_authority};
+use solana_stake_interface::state::StakeStateV2;
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::{task::JoinHandle, time::sleep};
 use yellowstone_grpc_proto::geyser::CommitmentLevel;
 
@@ -92,6 +99,8 @@ async fn refresh_if_needed(db: &DatabaseConnection) -> anyhow::Result<()> {
     ))
     .await?;
 
+    compute_non_circulating_audit(db, generation, context_slot).await?;
+
     // Retain the current and immediately preceding generation to make the API
     // status-read then page-read sequence safe across an atomic status switch.
     db.execute(Statement::from_sql_and_values(
@@ -161,6 +170,95 @@ async fn next_generation(db: &DatabaseConnection) -> anyhow::Result<i64> {
         .await?
         .ok_or_else(|| anyhow::anyhow!("stake projection status query returned no row"))?;
     Ok(row.try_get("", "generation")?)
+}
+
+async fn compute_non_circulating_audit(
+    db: &DatabaseConnection,
+    generation: i64,
+    context_slot: u64,
+) -> anyhow::Result<()> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT block_time FROM slots WHERE commitment = $1",
+            [(CommitmentLevel::Finalized as i32).into()],
+        ))
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("missing finalized block time"))?;
+    let block_time: i64 = row.try_get("", "block_time")?;
+    // Mainnet's post-warmup epoch cadence, already used by the existing epoch-stakes worker.
+    let epoch = context_slot / 432_000;
+    let static_accounts: HashSet<Pubkey> = non_circulating_accounts().into_iter().collect();
+    let withdrawers: HashSet<Pubkey> = withdraw_authority().into_iter().collect();
+
+    let mut lamports = 0u64;
+    let mut account_count = 0u64;
+    let mut stream = db
+        .stream(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT pubkey, lamports, data FROM stake_accounts_current WHERE generation = $1",
+            [generation.into()],
+        ))
+        .await?;
+    while let Some(row) = stream.try_next().await? {
+        let pubkey_bytes: Vec<u8> = row.try_get("", "pubkey")?;
+        let pubkey = Pubkey::try_from(pubkey_bytes.as_slice())?;
+        if static_accounts.contains(&pubkey) {
+            continue;
+        }
+        let data: Vec<u8> = row.try_get("", "data")?;
+        let Ok(state) = bincode::deserialize::<StakeStateV2>(&data) else {
+            continue;
+        };
+        let Some(meta) = state.meta() else { continue };
+        let locked = meta.lockup.unix_timestamp > block_time
+            || meta.lockup.epoch > epoch
+            || withdrawers.contains(&meta.authorized.withdrawer);
+        if locked {
+            let value: i64 = row.try_get("", "lamports")?;
+            lamports = lamports
+                .checked_add(value.try_into()?)
+                .ok_or_else(|| anyhow::anyhow!("non-circulating sum overflow"))?;
+            account_count += 1;
+        }
+    }
+    drop(stream);
+
+    let static_values = static_accounts
+        .iter()
+        .map(|key| format!("('\\\\x{}'::bytea)", hex::encode(key.as_ref())))
+        .collect::<Vec<_>>()
+        .join(",");
+    let static_rows = db
+        .query_all(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!(
+                "WITH requested(pubkey) AS (VALUES {static_values}), latest AS (\
+                 SELECT DISTINCT ON (pubkey) pubkey, lamports FROM (\
+                 SELECT pubkey, slot, lamports FROM accounts WHERE slot <= {context_slot} \
+                 UNION ALL SELECT pubkey, slot, lamports FROM snapshot_accounts WHERE slot <= {context_slot}\
+                 ) versions WHERE pubkey IN (SELECT pubkey FROM requested) ORDER BY pubkey, slot DESC) \
+                 SELECT lamports FROM latest WHERE lamports > 0"
+            ),
+        ))
+        .await?;
+    for row in static_rows {
+        let value: i64 = row.try_get("", "lamports")?;
+        lamports = lamports
+            .checked_add(value.try_into()?)
+            .ok_or_else(|| anyhow::anyhow!("non-circulating sum overflow"))?;
+        account_count += 1;
+    }
+
+    db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "INSERT INTO stake_supply_audits (context_slot, generation, block_time, epoch, non_circulating_lamports, account_count, computed_at_ms) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (context_slot) DO UPDATE SET generation = EXCLUDED.generation, block_time = EXCLUDED.block_time, epoch = EXCLUDED.epoch, non_circulating_lamports = EXCLUDED.non_circulating_lamports, account_count = EXCLUDED.account_count, computed_at_ms = EXCLUDED.computed_at_ms",
+        [
+            (context_slot as i64).into(), generation.into(), block_time.into(), (epoch as i64).into(),
+            (lamports as i64).into(), (account_count as i64).into(), (now_ms() as i64).into(),
+        ],
+    )).await?;
+    Ok(())
 }
 
 fn now_ms() -> u64 {

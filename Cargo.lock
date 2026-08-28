@@ -1717,6 +1717,7 @@ dependencies = [
  "solana-lattice-hash",
  "solana-program",
  "solana-pubkey 4.2.1",
+ "solana-runtime",
  "solana-stake-interface",
  "solana-vote-interface",
  "thiserror 2.0.18",
