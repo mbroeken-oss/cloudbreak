@@ -3,7 +3,8 @@ finalize-slot-buffer-size = 1000
 accounts-owner-map-enabled = false
 
 [snapshot]
-accounts-file-concurency = 32
+# Limit parallel archive readers so PostgreSQL retains I/O headroom for live indexing.
+accounts-file-concurency = 4
 
 [snapshot.pg-indexes]
 idx_snapshot_accounts_pubkey = false
@@ -18,7 +19,8 @@ endpoint = "http://localhost:8458"
 
 [database]
 url = "postgres://cloudbreak:cloudbreak@localhost:5432/cloudbreak"
-max-connections = 10
+# Keep enough pool capacity for snapshot ingestion without saturating storage.
+max-connections = 24
 min-connections = 1
 connect-timeout = "30s"
 idle-timeout = "10m"
