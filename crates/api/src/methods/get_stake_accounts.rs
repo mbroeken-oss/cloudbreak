@@ -249,8 +249,9 @@ fn populate_meta(summary: &mut StakeAccountSummary, meta: solana_stake_interface
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_cursor, encode_cursor};
+    use super::{decode_cursor, encode_cursor, summarize_account};
     use solana_pubkey::Pubkey;
+    use solana_stake_interface::state::{Meta, StakeStateV2};
 
     #[test]
     fn cursor_round_trip() {
@@ -259,5 +260,40 @@ mod tests {
             decode_cursor(Some(&encode_cursor(key))).unwrap(),
             key.to_bytes()
         );
+    }
+
+    #[test]
+    fn summarizes_initialized_stake_metadata() {
+        let account = Pubkey::new_unique();
+        let staker = Pubkey::new_unique();
+        let withdrawer = Pubkey::new_unique();
+        let custodian = Pubkey::new_unique();
+        let mut meta = Meta::auto(&staker);
+        meta.authorized.withdrawer = withdrawer;
+        meta.lockup.unix_timestamp = 123;
+        meta.lockup.epoch = 456;
+        meta.lockup.custodian = custodian;
+
+        let summary = summarize_account(
+            account,
+            789,
+            bincode::serialize(&StakeStateV2::Initialized(meta)).unwrap(),
+        );
+
+        assert_eq!(summary.pubkey, account.to_string());
+        assert_eq!(summary.lamports, 789);
+        assert_eq!(summary.state, "initialized");
+        let staker = staker.to_string();
+        let withdrawer = withdrawer.to_string();
+        assert_eq!(summary.staker_authority.as_deref(), Some(staker.as_str()));
+        assert_eq!(
+            summary.withdraw_authority.as_deref(),
+            Some(withdrawer.as_str())
+        );
+        let lockup = summary.lockup.unwrap();
+        assert_eq!(lockup.unix_timestamp, 123);
+        assert_eq!(lockup.epoch, 456);
+        assert_eq!(lockup.custodian, custodian.to_string());
+        assert!(summary.delegation.is_none());
     }
 }

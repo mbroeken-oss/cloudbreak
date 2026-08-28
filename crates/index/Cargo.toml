@@ -31,6 +31,7 @@ bincode = { workspace = true }
 yellowstone-grpc-proto = { workspace = true }
 solana-program = { workspace = true }
 solana-runtime = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 futures = { workspace = true }
 rust_decimal = { workspace = true }
 cloudbreak-api = { workspace = true }

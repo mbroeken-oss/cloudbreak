@@ -9,6 +9,7 @@
 use cloudbreak_core::{IndexConfig, STAKE_PROGRAM_ID};
 use futures::TryStreamExt;
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement, StreamTrait};
+use solana_epoch_schedule::EpochSchedule;
 use solana_pubkey::Pubkey;
 use solana_runtime::non_circulating_supply::{non_circulating_accounts, withdraw_authority};
 use solana_stake_interface::state::StakeStateV2;
@@ -81,6 +82,10 @@ async fn refresh_if_needed(db: &DatabaseConnection) -> anyhow::Result<()> {
     ))
     .await?;
 
+    // Audit the complete new generation before publishing it. If the audit fails,
+    // readers continue using the prior finalized generation.
+    compute_non_circulating_audit(db, generation, context_slot).await?;
+
     db.execute(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
@@ -98,8 +103,6 @@ async fn refresh_if_needed(db: &DatabaseConnection) -> anyhow::Result<()> {
         ],
     ))
     .await?;
-
-    compute_non_circulating_audit(db, generation, context_slot).await?;
 
     // Retain the current and immediately preceding generation to make the API
     // status-read then page-read sequence safe across an atomic status switch.
@@ -180,14 +183,17 @@ async fn compute_non_circulating_audit(
     let row = db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "SELECT block_time FROM slots WHERE commitment = $1",
-            [(CommitmentLevel::Finalized as i32).into()],
+            "SELECT block_time FROM slots WHERE commitment = $1 AND slot = $2",
+            [
+                (CommitmentLevel::Finalized as i32).into(),
+                (context_slot as i64).into(),
+            ],
         ))
         .await?
         .ok_or_else(|| anyhow::anyhow!("missing finalized block time"))?;
     let block_time: i64 = row.try_get("", "block_time")?;
-    // Mainnet's post-warmup epoch cadence, already used by the existing epoch-stakes worker.
-    let epoch = context_slot / 432_000;
+    // Match Agave's Clock epoch, including the historical warmup schedule.
+    let epoch = EpochSchedule::default().get_epoch(context_slot);
     let static_accounts: HashSet<Pubkey> = non_circulating_accounts().into_iter().collect();
     let withdrawers: HashSet<Pubkey> = withdraw_authority().into_iter().collect();
 
