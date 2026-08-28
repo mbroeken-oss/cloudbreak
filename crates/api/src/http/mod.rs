@@ -8,6 +8,7 @@ use crate::http::server::HttpHandlerResponse;
 use crate::http::server::ResponseBody;
 use crate::modules::bandwidth;
 use crate::modules::cache::GpaProcessor;
+use crate::modules::supply_cache::SharedSupplyCache;
 use crate::modules::vote_accounts_cache::SharedStakesSnapshot;
 use crate::query_tracker_client::QueryTrackerClient;
 use crate::slot_syncronizer::SlotSyncronizerData;
@@ -111,6 +112,7 @@ pub struct CloudbreakRpcState {
     pub stakes_cache: SharedStakesSnapshot,
     pub max_multiple_accounts: usize,
     pub simulation_supported: bool,
+    pub supply_cache: Option<SharedSupplyCache>,
     pub feature_set_cache: Arc<RwLock<Option<CachedFeatureSet>>>,
 }
 
@@ -134,6 +136,7 @@ impl CloudbreakRpcState {
         stakes_cache: SharedStakesSnapshot,
         max_multiple_accounts: usize,
         simulation_supported: bool,
+        supply_cache: Option<SharedSupplyCache>,
     ) -> Self {
         Self {
             database,
@@ -153,6 +156,7 @@ impl CloudbreakRpcState {
             stakes_cache,
             max_multiple_accounts,
             simulation_supported,
+            supply_cache,
             feature_set_cache: Arc::new(RwLock::new(None)),
         }
     }

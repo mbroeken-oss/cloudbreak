@@ -22,6 +22,7 @@ mod m20260703_000000_create_recent_blockhashes_table;
 mod m20260709_000000_add_block_height_to_recent_blockhashes;
 mod m20260711_000000_create_index_patterns_table;
 mod m20260828_000000_repair_legacy_schema_upgrade;
+mod m20260828_000001_create_supply_snapshots_table;
 
 pub struct Migrator;
 
@@ -44,6 +45,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260709_000000_add_block_height_to_recent_blockhashes::Migration),
             Box::new(m20260711_000000_create_index_patterns_table::Migration),
             Box::new(m20260828_000000_repair_legacy_schema_upgrade::Migration),
+            Box::new(m20260828_000001_create_supply_snapshots_table::Migration),
         ]
     }
 }

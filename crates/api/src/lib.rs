@@ -12,7 +12,7 @@ use std::time::Duration;
 use crate::{
     http::{CloudbreakRpcState, HeaderKeys},
     metrics::setup_metrics,
-    modules::{cache::GpaProcessor, vote_accounts_cache},
+    modules::{cache::GpaProcessor, supply_cache, vote_accounts_cache},
     query_tracker_client::QueryTrackerClient,
 };
 use std::sync::RwLock;
@@ -82,6 +82,15 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
     let request_timeout = config.server.request_timeout;
     let max_multiple_accounts = config.server.max_multiple_accounts;
 
+    let supply_cache = match config.supply_cache.clone() {
+        Some(supply_cache_config) => Some(
+            supply_cache::start(database.clone(), supply_cache_config)
+                .await
+                .map_err(|e| anyhow::anyhow!("failed to start supply cache: {e}"))?,
+        ),
+        None => None,
+    };
+
     // Setup optional module cache
     let gpa_processor = GpaProcessor::new(config.gpa_cache.clone());
 
@@ -139,6 +148,7 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
         stakes_cache,
         max_multiple_accounts,
         simulation_supported,
+        supply_cache,
     );
 
     info!("Server is starting...");

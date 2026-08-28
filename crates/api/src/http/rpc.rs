@@ -236,6 +236,18 @@ async fn process_single_request(
 
             json_response
         }
+        "getSupply" => {
+            let config: Option<methods::get_supply::GetSupplyConfig> =
+                extract_param(&rpc_request.params, 0).ok().flatten();
+            let result = methods::get_supply::get_supply(state, config).await;
+            json_serialize_response(id, result, ctx).await
+        }
+        "getStakeAccounts" => {
+            let config: Option<methods::get_stake_accounts::GetStakeAccountsConfig> =
+                extract_param(&rpc_request.params, 0).ok().flatten();
+            let result = methods::get_stake_accounts::get_stake_accounts(state, config).await;
+            json_serialize_response(id, result, ctx).await
+        }
         "getMultipleAccounts" => {
             let start_time = Instant::now();
 

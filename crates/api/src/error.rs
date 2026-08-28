@@ -37,6 +37,8 @@ pub enum RpcError {
         /// [`CloudbreakRpcState::unhealthy_response`].
         service_unavailable: bool,
     },
+    #[error("Supply cache is unavailable or stale")]
+    SupplyCacheUnavailable,
     #[error(
         "Account {pubkey} is owned by {owner}, which is excluded from this indexer's program filter; cannot serve this account"
     )]
@@ -86,6 +88,7 @@ impl RpcError {
             RpcError::KeyExcludedFromSecondaryIndex { .. } => "KEY_EXCLUDED_FROM_SECONDARY_INDEX",
             RpcError::ProcessedCommitmentNotSupported => "PROCESSED_COMMITMENT_NOT_SUPPORTED",
             RpcError::NodeUnhealthy { .. } => "NODE_UNHEALTHY",
+            RpcError::SupplyCacheUnavailable => "SUPPLY_CACHE_UNAVAILABLE",
             RpcError::AccountOwnerExcluded { .. } => "ACCOUNT_OWNER_EXCLUDED",
             RpcError::AccountNotFound { .. } => "Invalid param: could not find account",
             RpcError::NotATokenAccount { .. } => "Invalid param: not a Token account",
@@ -107,6 +110,7 @@ impl RpcError {
             RpcError::KeyExcludedFromSecondaryIndex { .. } => -32010,
             RpcError::ProcessedCommitmentNotSupported => -32003,
             RpcError::NodeUnhealthy { .. } => -32005,
+            RpcError::SupplyCacheUnavailable => -32006,
             RpcError::AccountOwnerExcluded { .. } => -32010,
             RpcError::AccountNotFound { .. } => -32602,
             RpcError::NotATokenAccount { .. } => -32602,

@@ -654,11 +654,53 @@ pub struct ApiConfig {
         default = "ApiConfig::default_health_max_slot_age_seconds"
     )]
     pub health_max_slot_age_seconds: u64,
+    /// Optional finalized `getSupply` cache sourced from a canonical local RPC.
+    /// Omitted by default so no refresh traffic is started.
+    #[serde(rename = "supply-cache", default)]
+    pub supply_cache: Option<SupplyCacheConfig>,
 }
 
 impl ApiConfig {
     const fn default_health_max_slot_age_seconds() -> u64 {
         120
+    }
+}
+
+/// Configuration for Cloudbreak's persisted canonical finalized `getSupply`
+/// cache. Public reads only serve the cache; they never run the heavy supply
+/// calculation themselves.
+#[derive(Deserialize, Debug, Clone)]
+pub struct SupplyCacheConfig {
+    #[serde(rename = "source-url")]
+    pub source_url: String,
+    #[serde(
+        rename = "refresh-interval-ms",
+        default = "SupplyCacheConfig::default_refresh_interval_ms"
+    )]
+    pub refresh_interval_ms: u64,
+    #[serde(
+        rename = "request-timeout-ms",
+        default = "SupplyCacheConfig::default_request_timeout_ms"
+    )]
+    pub request_timeout_ms: u64,
+    #[serde(
+        rename = "max-staleness-ms",
+        default = "SupplyCacheConfig::default_max_staleness_ms"
+    )]
+    pub max_staleness_ms: u64,
+}
+
+impl SupplyCacheConfig {
+    const fn default_refresh_interval_ms() -> u64 {
+        60_000
+    }
+
+    const fn default_request_timeout_ms() -> u64 {
+        30_000
+    }
+
+    const fn default_max_staleness_ms() -> u64 {
+        300_000
     }
 }
 
