@@ -105,6 +105,28 @@ pub async fn get_slot_data(db: &DatabaseConnection) -> Option<SlotSyncronizerDat
     })
 }
 
+/// # W3C traceparent format:
+/// 00-00000000000000000000000000000123-0000000000000123-01
+/// ^^                                                   ^^
+/// version                                               trace-flags (sampled or not)
+///    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^
+///     trace-id (32 hex chars)         parent-id (16 hex chars)
+///
+pub fn add_trace_traceparent_to_query(sql: &str) -> String {
+    let cx = tracing::Span::current().context();
+    let sc = cx.span().span_context().clone();
+
+    if sc.is_valid() && sc.is_sampled() {
+        format!(
+            "/*traceparent='00-{}-{}-01'*/ {sql}",
+            sc.trace_id(),
+            sc.span_id()
+        )
+    } else {
+        sql.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::health_last_update_is_fresh;
@@ -129,27 +151,5 @@ mod tests {
         let updated_at = DateTime::from_timestamp(0, 0).unwrap().naive_utc();
 
         assert!(health_last_update_is_fresh(1_000, updated_at, u64::MAX));
-    }
-}
-
-/// # W3C traceparent format:
-/// 00-00000000000000000000000000000123-0000000000000123-01
-/// ^^                                                   ^^
-/// version                                               trace-flags (sampled or not)
-///    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^
-///     trace-id (32 hex chars)         parent-id (16 hex chars)
-///
-pub fn add_trace_traceparent_to_query(sql: &str) -> String {
-    let cx = tracing::Span::current().context();
-    let sc = cx.span().span_context().clone();
-
-    if sc.is_valid() && sc.is_sampled() {
-        format!(
-            "/*traceparent='00-{}-{}-01'*/ {sql}",
-            sc.trace_id(),
-            sc.span_id()
-        )
-    } else {
-        sql.to_string()
     }
 }

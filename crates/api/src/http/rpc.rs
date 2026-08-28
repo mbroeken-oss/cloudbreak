@@ -115,6 +115,7 @@ async fn process_batch(
 
 /// Note: `in_batch` param, will make the streamed response to be buffered
 /// into a `Vec<u8>` and returned as a `ResponseBody::Buffered(Vec<u8>)`.
+#[allow(clippy::unnecessary_unwrap)] // existing error-labeling branches borrow `result` for logging before serialization consumes it.
 async fn process_single_request(
     rpc_request: JsonRpcRequest,
     state: &Arc<CloudbreakRpcState>,

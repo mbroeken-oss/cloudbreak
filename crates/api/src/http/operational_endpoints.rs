@@ -604,7 +604,7 @@ fn build_gpa_cache_response(
                 .collect();
 
             // Newest-first by slot is more useful for debugging than HashMap order.
-            out.sort_by(|a, b| b.slot.cmp(&a.slot));
+            out.sort_by_key(|entry| std::cmp::Reverse(entry.slot));
             if let Some(limit) = params.limit {
                 out.truncate(limit);
             }

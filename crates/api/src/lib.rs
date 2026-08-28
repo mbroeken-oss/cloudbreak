@@ -189,7 +189,7 @@ async fn load_indexer_filter_when_ready(
             warn!(
                 "Indexer filter is not available yet; waiting for indexer startup before serving API"
             );
-        } else if attempts % 30 == 0 {
+        } else if attempts.is_multiple_of(30) {
             warn!(
                 attempts,
                 "Still waiting for indexer filter before serving API"
@@ -215,7 +215,7 @@ async fn connect_database_when_ready(
                         error = ?err,
                         "Database is not available yet; waiting before serving API"
                     );
-                } else if attempts % 30 == 0 {
+                } else if attempts.is_multiple_of(30) {
                     warn!(
                         attempts,
                         error = ?err,
