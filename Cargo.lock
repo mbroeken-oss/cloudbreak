@@ -1714,6 +1714,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-client",
+ "solana-clock",
  "solana-epoch-schedule",
  "solana-lattice-hash",
  "solana-program",
