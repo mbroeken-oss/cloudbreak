@@ -103,15 +103,29 @@ pub async fn get_stake_accounts(
             RpcError::InternalError
         })?
         .ok_or_else(|| state.node_unhealthy())?;
-    let generation: i64 = projection
+    let active_generation: i64 = projection
         .try_get("", "generation")
         .map_err(|_| RpcError::InternalError)?;
-    let context_slot: i64 = projection
+    let active_context_slot: i64 = projection
         .try_get("", "context_slot")
         .map_err(|_| RpcError::InternalError)?;
-    let context_slot: u64 = context_slot
+    let active_context_slot: u64 = active_context_slot
         .try_into()
         .map_err(|_| RpcError::InternalError)?;
+    let cursor = decode_cursor(config.cursor.as_deref())?;
+    let (generation, context_slot, cursor_pubkey) = match cursor {
+        Some(cursor) => {
+            if cursor.generation > active_generation || cursor.generation < active_generation - 1 {
+                return Err(expired_cursor_error());
+            }
+            (
+                cursor.generation,
+                cursor.context_slot,
+                cursor.pubkey.to_bytes().to_vec(),
+            )
+        }
+        None => (active_generation, active_context_slot, Vec::new()),
+    };
 
     if let Some(min_context_slot) = config.min_context_slot
         && context_slot < min_context_slot
@@ -127,7 +141,23 @@ pub async fn get_stake_accounts(
             "limit must be between 1 and {MAX_LIMIT}"
         )));
     }
-    let cursor = decode_cursor(config.cursor.as_deref())?;
+    let generation_exists = state
+        .database
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT 1 FROM stake_accounts_current WHERE generation = $1 LIMIT 1",
+            [generation.into()],
+        ))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "getStakeAccounts projection generation query failed");
+            RpcError::InternalError
+        })?
+        .is_some();
+    if !generation_exists {
+        return Err(expired_cursor_error());
+    }
+
     let rows = state
         .database
         .query_all(Statement::from_sql_and_values(
@@ -139,7 +169,11 @@ pub async fn get_stake_accounts(
             ORDER BY pubkey ASC
             LIMIT $3
             "#,
-            [generation.into(), cursor.into(), (limit as i64 + 1).into()],
+            [
+                generation.into(),
+                cursor_pubkey.into(),
+                (limit as i64 + 1).into(),
+            ],
         ))
         .await
         .map_err(|error| {
@@ -177,28 +211,73 @@ pub async fn get_stake_accounts(
         },
         value: GetStakeAccountsValue {
             accounts,
-            next_cursor: has_more.then(|| encode_cursor(last_pubkey.expect("page has entries"))),
+            next_cursor: has_more.then(|| {
+                encode_cursor(StakeCursor {
+                    generation,
+                    context_slot,
+                    pubkey: last_pubkey.expect("page has entries"),
+                })
+            }),
         },
     })
 }
 
-fn decode_cursor(cursor: Option<&str>) -> Result<Vec<u8>, RpcError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StakeCursor {
+    generation: i64,
+    context_slot: u64,
+    pubkey: Pubkey,
+}
+
+fn decode_cursor(cursor: Option<&str>) -> Result<Option<StakeCursor>, RpcError> {
     let Some(cursor) = cursor else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
-    let bytes = bs58::decode(cursor)
-        .into_vec()
-        .map_err(|_| RpcError::InvalidParamsWithMessage("invalid cursor".to_string()))?;
-    if bytes.len() != 32 {
+    let mut parts = cursor.split(':');
+    let (Some("v1"), Some(generation), Some(context_slot), Some(pubkey), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
         return Err(RpcError::InvalidParamsWithMessage(
             "invalid cursor".to_string(),
         ));
-    }
-    Ok(bytes)
+    };
+    let generation = generation
+        .parse::<i64>()
+        .ok()
+        .filter(|generation| *generation > 0)
+        .ok_or_else(|| RpcError::InvalidParamsWithMessage("invalid cursor".to_string()))?;
+    let context_slot = context_slot
+        .parse::<u64>()
+        .map_err(|_| RpcError::InvalidParamsWithMessage("invalid cursor".to_string()))?;
+    let bytes = bs58::decode(pubkey)
+        .into_vec()
+        .map_err(|_| RpcError::InvalidParamsWithMessage("invalid cursor".to_string()))?;
+    let pubkey = Pubkey::try_from(bytes.as_slice())
+        .map_err(|_| RpcError::InvalidParamsWithMessage("invalid cursor".to_string()))?;
+    Ok(Some(StakeCursor {
+        generation,
+        context_slot,
+        pubkey,
+    }))
 }
 
-fn encode_cursor(pubkey: Pubkey) -> String {
-    bs58::encode(pubkey.as_ref()).into_string()
+fn encode_cursor(cursor: StakeCursor) -> String {
+    format!(
+        "v1:{}:{}:{}",
+        cursor.generation,
+        cursor.context_slot,
+        bs58::encode(cursor.pubkey.as_ref()).into_string()
+    )
+}
+
+fn expired_cursor_error() -> RpcError {
+    RpcError::InvalidParamsWithMessage(
+        "cursor has expired; restart pagination without a cursor".to_string(),
+    )
 }
 
 fn summarize_account(pubkey: Pubkey, lamports: u64, data: Vec<u8>) -> StakeAccountSummary {
@@ -249,17 +328,27 @@ fn populate_meta(summary: &mut StakeAccountSummary, meta: solana_stake_interface
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_cursor, encode_cursor, summarize_account};
+    use super::{StakeCursor, decode_cursor, encode_cursor, summarize_account};
     use solana_pubkey::Pubkey;
     use solana_stake_interface::state::{Meta, StakeStateV2};
 
     #[test]
     fn cursor_round_trip() {
-        let key = Pubkey::new_unique();
+        let cursor = StakeCursor {
+            generation: 7,
+            context_slot: 42,
+            pubkey: Pubkey::new_unique(),
+        };
         assert_eq!(
-            decode_cursor(Some(&encode_cursor(key))).unwrap(),
-            key.to_bytes()
+            decode_cursor(Some(&encode_cursor(cursor))).unwrap(),
+            Some(cursor)
         );
+    }
+
+    #[test]
+    fn rejects_legacy_or_malformed_cursor() {
+        assert!(decode_cursor(Some(&Pubkey::new_unique().to_string())).is_err());
+        assert!(decode_cursor(Some("v1:0:42:not-a-pubkey")).is_err());
     }
 
     #[test]

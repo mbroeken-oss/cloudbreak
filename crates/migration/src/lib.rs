@@ -25,6 +25,7 @@ mod m20260828_000000_repair_legacy_schema_upgrade;
 mod m20260828_000001_create_supply_snapshots_table;
 mod m20260828_000002_create_stake_projection_tables;
 mod m20260828_000003_create_stake_supply_audits_table;
+mod m20260829_000004_fix_stake_projection_indexes;
 
 pub struct Migrator;
 
@@ -50,6 +51,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260828_000001_create_supply_snapshots_table::Migration),
             Box::new(m20260828_000002_create_stake_projection_tables::Migration),
             Box::new(m20260828_000003_create_stake_supply_audits_table::Migration),
+            Box::new(m20260829_000004_fix_stake_projection_indexes::Migration),
         ]
     }
 }

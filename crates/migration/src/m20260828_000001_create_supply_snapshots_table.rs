@@ -25,10 +25,10 @@ impl MigrationTrait for Migration {
                 -- indexes do not pay the storage cost.
                 CREATE INDEX IF NOT EXISTS idx_accounts_stake_pubkey_slot
                     ON accounts (pubkey, slot DESC)
-                    WHERE owner = '\\x06a1d8179137542a983437bdfe2a7ab2557f535c8a78722b68a49dc000000000'::bytea;
+                    WHERE owner = decode('06a1d8179137542a983437bdfe2a7ab2557f535c8a78722b68a49dc000000000', 'hex');
                 CREATE INDEX IF NOT EXISTS idx_snapshot_accounts_stake_pubkey_slot
                     ON snapshot_accounts (pubkey, slot DESC)
-                    WHERE owner = '\\x06a1d8179137542a983437bdfe2a7ab2557f535c8a78722b68a49dc000000000'::bytea;
+                    WHERE owner = decode('06a1d8179137542a983437bdfe2a7ab2557f535c8a78722b68a49dc000000000', 'hex');
                 "#,
             )
             .await?;
