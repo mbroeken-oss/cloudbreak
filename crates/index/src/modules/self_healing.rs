@@ -307,16 +307,18 @@ impl SelfHealingState {
 
                 self.finalizer.pause().await;
 
+                confirmed_gaps_list.sort_unstable();
+                let oldest_slot_in_gaps_list =
+                    *confirmed_gaps_list.first().expect("No slots in gaps list");
+                let newest_slot_in_gaps_list =
+                    *confirmed_gaps_list.last().expect("No slots in gaps list");
+
                 let start_time = tokio::time::Instant::now();
                 tracing::info!(
                     "Starting to fill gaps(count: {}): {:?}",
                     confirmed_gaps_list.len(),
                     confirmed_gaps_list
                 );
-
-                confirmed_gaps_list.sort_unstable();
-                let newest_slot_in_gaps_list =
-                    *confirmed_gaps_list.last().expect("No slots in gaps list");
 
                 let snapshot_config = config.snapshot.as_ref().unwrap();
                 let snapshot_config = SnapshotConfig {
@@ -330,6 +332,7 @@ impl SelfHealingState {
 
                 let snapshot_pair = match fetch_snapshot_pair_for_gap_filling(
                     &snapshot_config.tracker_endpoint.endpoint,
+                    oldest_slot_in_gaps_list,
                     newest_slot_in_gaps_list,
                 )
                 .await
@@ -556,12 +559,13 @@ impl SelfHealingState {
 /// giving up after 60 seconds if no covering pair is available yet.
 async fn fetch_snapshot_pair_for_gap_filling(
     tracker_endpoint: &str,
-    target_slot: u64,
+    range_start: u64,
+    range_end: u64,
 ) -> Result<SnapshotPair, anyhow::Error> {
-    let snapshot_pair_future = cloudbreak_snapshot::sidecar::get_snapshot_data(
+    let snapshot_pair_future = cloudbreak_snapshot::sidecar::get_snapshot_data_covering_range(
         tracker_endpoint,
-        Some(target_slot),
-        true,
+        range_start,
+        range_end,
         true,
     );
 

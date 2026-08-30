@@ -204,6 +204,51 @@ pub async fn get_snapshot_data(
     save_to_file: bool,
     force_returned_incremental: bool,
 ) -> Result<SnapshotPair> {
+    get_snapshot_data_with_range_start(
+        tracker_endpoint,
+        target_slot,
+        None,
+        save_to_file,
+        force_returned_incremental,
+    )
+    .await
+}
+
+/// Returns a snapshot pair whose incremental range covers every slot in
+/// `range_start..=range_end`.
+///
+/// A pair that merely ends after `range_end` is insufficient when its full
+/// snapshot base is newer than the first missing slot. Gap repair needs
+/// `base_slot < range_start` because incremental coverage is `(base, end]`.
+pub async fn get_snapshot_data_covering_range(
+    tracker_endpoint: &str,
+    range_start: u64,
+    range_end: u64,
+    save_to_file: bool,
+) -> Result<SnapshotPair> {
+    if range_start > range_end {
+        return Err(anyhow::anyhow!(
+            "invalid snapshot coverage range: {range_start}..={range_end}"
+        ));
+    }
+
+    get_snapshot_data_with_range_start(
+        tracker_endpoint,
+        Some(range_end),
+        Some(range_start),
+        save_to_file,
+        true,
+    )
+    .await
+}
+
+async fn get_snapshot_data_with_range_start(
+    tracker_endpoint: &str,
+    target_slot: Option<u64>,
+    range_start: Option<u64>,
+    save_to_file: bool,
+    force_returned_incremental: bool,
+) -> Result<SnapshotPair> {
     let client = reqwest::Client::new();
     let mut last_no_coverage_log: Option<Instant> = None;
 
@@ -264,7 +309,9 @@ pub async fn get_snapshot_data(
                 true
             };
 
-            if is_covered && is_incremental_flag_satisfied {
+            let range_start_is_covered = covers_range_start(&snapshot_pair, range_start);
+
+            if is_covered && is_incremental_flag_satisfied && range_start_is_covered {
                 return Ok(snapshot_pair);
             }
         }
@@ -283,6 +330,16 @@ pub async fn get_snapshot_data(
         }
 
         sleep(RETRY_WAIT_SECS).await;
+    }
+}
+
+fn covers_range_start(snapshot_pair: &SnapshotPair, range_start: Option<u64>) -> bool {
+    match (range_start, snapshot_pair.incremental_snapshot.as_ref()) {
+        (Some(range_start), Some(incremental)) => {
+            incremental.base_slot.is_some_and(|base| base < range_start)
+        }
+        (Some(_), None) => false,
+        (None, _) => true,
     }
 }
 
@@ -580,7 +637,9 @@ fn normalized_account_file_len(
 
 #[cfg(test)]
 mod tests {
-    use super::normalized_account_file_len;
+    use super::{
+        SnapshotData, SnapshotPair, SnapshotType, covers_range_start, normalized_account_file_len,
+    };
 
     #[test]
     fn account_file_len_uses_metadata_when_it_fits() {
@@ -591,5 +650,31 @@ mod tests {
     #[test]
     fn account_file_len_clamps_metadata_that_exceeds_file() {
         assert_eq!(normalized_account_file_len(10, 1, 312, 176), 176);
+    }
+
+    #[test]
+    fn incremental_range_requires_base_before_first_missing_slot() {
+        let pair = SnapshotPair {
+            full_snapshot: SnapshotData {
+                file_name: "snapshot-200.tar.zst".to_string(),
+                base_slot: None,
+                slot: 200,
+                snapshot_type: SnapshotType::Full,
+                download_url: None,
+            },
+            incremental_snapshot: Some(SnapshotData {
+                file_name: "incremental-snapshot-200-400.tar.zst".to_string(),
+                base_slot: Some(200),
+                slot: 400,
+                snapshot_type: SnapshotType::Incremental,
+                download_url: None,
+            }),
+            downloading_endpoint: "http://localhost".to_string(),
+        };
+
+        assert!(pair.check_target_slot(300).unwrap());
+        assert!(!covers_range_start(&pair, Some(150)));
+        assert!(covers_range_start(&pair, Some(250)));
+        assert!(covers_range_start(&pair, None));
     }
 }
