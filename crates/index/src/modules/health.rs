@@ -39,6 +39,15 @@ impl ServiceHealth {
         }
     }
 
+    /// Publishes the in-memory startup state before background workers begin.
+    ///
+    /// The database row may still say healthy from the previous process. Workers
+    /// that gate expensive rebuilds on that row must not start while the startup
+    /// snapshot is being loaded.
+    pub async fn publish_initial_state(&self) {
+        db_queries::update_service_health(&self.db, self.is_healthy()).await;
+    }
+
     /// Returns `true` when there are no active unhealthy reasons, mirroring the
     /// value written to `service_health.healthy` / `slots.health`.
     pub fn is_healthy(&self) -> bool {

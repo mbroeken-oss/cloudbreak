@@ -93,6 +93,7 @@ pub async fn run(config: &str) -> CloudbreakResult<()> {
     // Service health is tracked as a set of reasons (Startup is set until the startup snapshot is
     // processed; GapFill is set while a gap fill is in progress).
     let health = ServiceHealth::new(db.clone());
+    health.publish_initial_state().await;
 
     let updated_accounts_during_startup =
         UpdatedAccountsDuringStartup::new(snapshot_processing_state.clone(), health.clone());
@@ -161,9 +162,6 @@ pub async fn run(config: &str) -> CloudbreakResult<()> {
         .set(indexer_state.slot_finalizer.clone())
         .ok()
         .expect("Failed to set finalizer for debug endpoint");
-
-    let _epoch_stakes_handle =
-        modules::epoch_stakes::spawn_epoch_stakes_recomputer(db.clone(), config.clone());
 
     tokio::select! {
         _ = main_loop(
