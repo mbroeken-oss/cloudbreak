@@ -1,0 +1,104 @@
+[
+  {
+    "package": "async-std",
+    "version": "1.13.2",
+    "ids": [
+      "RUSTSEC-2025-0052"
+    ]
+  },
+  {
+    "package": "bincode",
+    "version": "1.3.3",
+    "ids": [
+      "RUSTSEC-2025-0141"
+    ]
+  },
+  {
+    "package": "bitmaps",
+    "version": "3.2.1",
+    "ids": [
+      "RUSTSEC-2025-0167",
+      "RUSTSEC-2026-0247"
+    ]
+  },
+  {
+    "package": "curve25519-dalek",
+    "version": "3.2.0",
+    "ids": [
+      "GHSA-x4gp-pqpj-f43q",
+      "RUSTSEC-2024-0344"
+    ]
+  },
+  {
+    "package": "derivative",
+    "version": "2.2.0",
+    "ids": [
+      "RUSTSEC-2024-0388"
+    ]
+  },
+  {
+    "package": "ed25519-dalek",
+    "version": "1.0.1",
+    "ids": [
+      "GHSA-w5vr-6qhr-36cc",
+      "RUSTSEC-2022-0093"
+    ]
+  },
+  {
+    "package": "libsecp256k1",
+    "version": "0.7.2",
+    "ids": [
+      "RUSTSEC-2025-0161"
+    ]
+  },
+  {
+    "package": "memmap2",
+    "version": "0.5.10",
+    "ids": [
+      "RUSTSEC-2026-0186"
+    ]
+  },
+  {
+    "package": "opentelemetry_sdk",
+    "version": "0.31.0",
+    "ids": [
+      "GHSA-w9wp-h8wv-79jx"
+    ]
+  },
+  {
+    "package": "paste",
+    "version": "1.0.15",
+    "ids": [
+      "RUSTSEC-2024-0436"
+    ]
+  },
+  {
+    "package": "proc-macro-error2",
+    "version": "2.0.1",
+    "ids": [
+      "RUSTSEC-2026-0173"
+    ]
+  },
+  {
+    "package": "rand",
+    "version": "0.7.3",
+    "ids": [
+      "GHSA-cq8v-f236-94qc",
+      "RUSTSEC-2026-0097"
+    ]
+  },
+  {
+    "package": "rkyv",
+    "version": "0.7.46",
+    "ids": [
+      "RUSTSEC-2026-0235"
+    ]
+  },
+  {
+    "package": "rsa",
+    "version": "0.9.10",
+    "ids": [
+      "RUSTSEC-2023-0071"
+    ]
+  }
+]
