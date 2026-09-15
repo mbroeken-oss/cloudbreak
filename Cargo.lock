@@ -369,7 +369,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -380,7 +380,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1090,6 +1090,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1540,6 +1546,7 @@ dependencies = [
  "hex",
  "opentelemetry",
  "opentelemetry-otlp",
+ "opentelemetry-proto",
  "opentelemetry_sdk",
  "sea-orm",
  "serde",
@@ -1549,7 +1556,9 @@ dependencies = [
  "tar",
  "tikv-jemallocator",
  "tokio",
+ "tokio-stream",
  "toml",
+ "tonic",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -1584,7 +1593,7 @@ dependencies = [
  "opentelemetry",
  "pin-project",
  "prometheus",
- "reqwest",
+ "reqwest 0.12.28",
  "rust_decimal",
  "sea-orm",
  "serde",
@@ -1757,7 +1766,7 @@ dependencies = [
  "hyperloglogplus",
  "lazy_static",
  "prometheus",
- "reqwest",
+ "reqwest 0.12.28",
  "sea-orm",
  "serde",
  "serde_json",
@@ -1783,7 +1792,7 @@ dependencies = [
  "hex",
  "lazy_static",
  "prometheus",
- "reqwest",
+ "reqwest 0.12.28",
  "rust_decimal",
  "sea-orm",
  "serde",
@@ -1891,6 +1900,18 @@ dependencies = [
  "libc",
  "unicode-width",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "const-hex"
+version = "1.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "188c2337969e01e04cca32b92011b72db2b43a8b7fc2ae60741db78f7873724e"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "proptest",
+ "serde_core",
 ]
 
 [[package]]
@@ -2559,7 +2580,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2989,7 +3010,7 @@ dependencies = [
  "ff",
  "rand 0.8.6",
  "rand_core 0.6.4",
- "rand_xorshift",
+ "rand_xorshift 0.3.0",
  "subtle",
 ]
 
@@ -3563,7 +3584,7 @@ dependencies = [
  "futures",
  "hex",
  "rand 0.8.6",
- "reqwest",
+ "reqwest 0.12.28",
  "sea-orm",
  "serde",
  "serde_json",
@@ -4173,7 +4194,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4428,9 +4449,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b84bcd6ae87133e903af7ef497404dda70c60d0ea14895fc8a5e6722754fc2a0"
+checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -4442,22 +4463,22 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-http"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7a6d09a73194e6b66df7c8f1b680f156d916a1a942abf2de06823dd02b7855d"
+checksum = "5683015d09e2df236ef005b17f6f196f0d5f6313c4fa43a7b6a53b52776e4331"
 dependencies = [
  "async-trait",
  "bytes",
  "http",
  "opentelemetry",
- "reqwest",
+ "reqwest 0.13.5",
 ]
 
 [[package]]
 name = "opentelemetry-otlp"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a2366db2dca4d2ad033cad11e6ee42844fd727007af5ad04a1730f4cb8163bf"
+checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
 dependencies = [
  "http",
  "opentelemetry",
@@ -4465,37 +4486,41 @@ dependencies = [
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost",
- "reqwest",
+ "reqwest 0.13.5",
  "thiserror 2.0.18",
  "tokio",
  "tonic",
- "tracing",
+ "tonic-types",
 ]
 
 [[package]]
 name = "opentelemetry-proto"
-version = "0.31.0"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7175df06de5eaee9909d4805a3d07e28bb752c34cab57fa9cff549da596b30f"
+checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
 dependencies = [
+ "base64 0.22.1",
+ "const-hex",
  "opentelemetry",
  "opentelemetry_sdk",
  "prost",
+ "serde",
  "tonic",
  "tonic-prost",
 ]
 
 [[package]]
 name = "opentelemetry_sdk"
-version = "0.31.0"
+version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14ae4f5991976fd48df6d843de219ca6d31b01daaab2dad5af2badeded372bd"
+checksum = "9b59f80e1ac4d5ff7a2db8fb6c80badb7f0f3f858211fba08dd9aaec750894f9"
 dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
  "opentelemetry",
  "percent-encoding",
+ "portable-atomic",
  "rand 0.9.4",
  "thiserror 2.0.18",
  "tokio",
@@ -4884,8 +4909,23 @@ dependencies = [
  "memchr",
  "parking_lot",
  "protobuf",
- "reqwest",
+ "reqwest 0.12.28",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "proptest"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
+dependencies = [
+ "bitflags",
+ "num-traits",
+ "rand 0.9.4",
+ "rand_chacha 0.9.0",
+ "rand_xorshift 0.4.0",
+ "regex-syntax",
+ "unarray",
 ]
 
 [[package]]
@@ -4904,7 +4944,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -5245,6 +5285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_xorshift"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
+dependencies = [
+ "rand_core 0.9.5",
+]
+
+[[package]]
 name = "rand_xoshiro"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5378,6 +5427,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "reqwest"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "futures-channel",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "js-sys",
+ "log",
+ "percent-encoding",
+ "pin-project-lite",
+ "sync_wrapper",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "reqwest-middleware"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5386,7 +5466,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http",
- "reqwest",
+ "reqwest 0.12.28",
  "serde",
  "thiserror 1.0.69",
  "tower-service",
@@ -5521,7 +5601,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5580,7 +5660,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6151,7 +6231,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7269,7 +7349,7 @@ dependencies = [
  "crossbeam-channel",
  "gethostname",
  "log",
- "reqwest",
+ "reqwest 0.12.28",
  "solana-cluster-type",
  "solana-sha256-hasher",
  "solana-time-utils",
@@ -7716,7 +7796,7 @@ dependencies = [
  "futures",
  "indicatif",
  "log",
- "reqwest",
+ "reqwest 0.12.28",
  "reqwest-middleware",
  "semver",
  "serde",
@@ -7753,7 +7833,7 @@ checksum = "c6f007fc3629ffcda78189a82fee168322edc1c31cb0e792f468455c7bbe3153"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
- "reqwest",
+ "reqwest 0.12.28",
  "reqwest-middleware",
  "serde",
  "serde_json",
@@ -9716,7 +9796,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10106,6 +10186,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-types"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a875a902255423d34c1f20838ab374126db8eb41625b7947a1d54113b0b7399"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tonic",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10205,9 +10296,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-opentelemetry"
-version = "0.32.1"
+version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ac28f2d093c6c477eaa76b23525478f38de514fa9aeb1285738d4b97a9552fc"
+checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
 dependencies = [
  "js-sys",
  "opentelemetry",
@@ -10268,6 +10359,12 @@ name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
+
+[[package]]
+name = "unarray"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
 name = "unicase"
@@ -10694,7 +10791,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

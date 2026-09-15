@@ -45,3 +45,8 @@ sea-orm = { workspace = true }
 
 # jemalloc for better memory management
 tikv-jemallocator = { workspace = true }
+
+[dev-dependencies]
+opentelemetry-proto = { version = "0.32", features = ["gen-tonic", "trace"] }
+tonic = { version = "0.14", features = ["transport"] }
+tokio-stream = { workspace = true, features = ["net"] }

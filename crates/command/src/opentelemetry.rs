@@ -195,6 +195,21 @@ fn init_otel_layer<S>(
 where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
+    let provider = build_provider(config);
+
+    let tracer = provider.tracer("cloudbreak");
+
+    opentelemetry::global::set_tracer_provider(provider);
+
+    // Create layer with minimal config
+    OpenTelemetryLayer::new(tracer)
+        .with_tracked_inactivity(config.track_idle_time) // Sets if track or not track idle time
+        .with_target(false)
+        .with_location(false)
+        .with_threads(false)
+}
+
+fn build_provider(config: &TracingConfig) -> SdkTracerProvider {
     // let resource = Resource::builder()
     //     .with_service_name("cloudbreak-api")
     //     .build();
@@ -229,21 +244,94 @@ where
         Sampler::TraceIdRatioBased(config.sample_ratio)
     };
 
-    let provider = SdkTracerProvider::builder()
+    SdkTracerProvider::builder()
         .with_resource(resource)
         .with_sampler(sampler)
         .with_id_generator(RandomIdGenerator::default())
         .with_span_processor(batch_processor)
-        .build();
+        .build()
+}
 
-    let tracer = provider.tracer("cloudbreak");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry::trace::{Span, Tracer};
+    use opentelemetry_proto::tonic::collector::trace::v1::{
+        ExportTraceServiceRequest, ExportTraceServiceResponse,
+        trace_service_server::{TraceService, TraceServiceServer},
+    };
+    use tokio::sync::mpsc;
 
-    opentelemetry::global::set_tracer_provider(provider);
+    struct Capture(mpsc::UnboundedSender<ExportTraceServiceRequest>);
+    #[tonic::async_trait]
+    impl TraceService for Capture {
+        async fn export(
+            &self,
+            request: tonic::Request<ExportTraceServiceRequest>,
+        ) -> Result<tonic::Response<ExportTraceServiceResponse>, tonic::Status> {
+            self.0.send(request.into_inner()).unwrap();
+            Ok(tonic::Response::new(ExportTraceServiceResponse::default()))
+        }
+    }
 
-    // Create layer with minimal config
-    OpenTelemetryLayer::new(tracer)
-        .with_tracked_inactivity(config.track_idle_time) // Sets if track or not track idle time
-        .with_target(false)
-        .with_location(false)
-        .with_threads(false)
+    #[test]
+    fn tracing_is_disabled_when_config_omits_it() {
+        let config: TracingConfig = toml::from_str("").unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.max_queue_size, 2048);
+        assert_eq!(config.max_batch_size, 512);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn configured_provider_exports_and_flushes_to_grpc_collector() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(TraceServiceServer::new(Capture(tx)))
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async {
+                        let _ = stop_rx.await;
+                    },
+                )
+                .await
+                .unwrap();
+        });
+        let config = TracingConfig {
+            enabled: true,
+            endpoint: format!("http://{address}"),
+            sample_ratio: 1.0,
+            max_queue_size: 16,
+            max_batch_size: 4,
+            ..TracingConfig::default()
+        };
+        let provider = build_provider(&config);
+        provider
+            .tracer("security-test")
+            .start("export-regression")
+            .end();
+        tokio::task::spawn_blocking(move || {
+            provider.force_flush().unwrap();
+            provider.shutdown().unwrap();
+        })
+        .await
+        .unwrap();
+        let request = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            request
+                .resource_spans
+                .iter()
+                .flat_map(|r| &r.scope_spans)
+                .flat_map(|s| &s.spans)
+                .any(|s| s.name == "export-regression")
+        );
+        stop_tx.send(()).unwrap();
+        server.await.unwrap();
+    }
 }
