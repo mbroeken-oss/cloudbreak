@@ -21,7 +21,7 @@ name = "migration"
 path = "src/lib.rs"
 
 [dependencies]
-async-std = { workspace = true, features = ["attributes", "tokio1"] }
+tokio = { workspace = true }
 solana-pubkey = { workspace = true }
 hex = { workspace = true }
 cloudbreak-core = { workspace = true }
