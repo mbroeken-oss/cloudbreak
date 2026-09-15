@@ -1,0 +1,27 @@
+[Unit]
+Description=Cloudbreak demand-driven account query tracker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloudbreak
+Group=cloudbreak
+EnvironmentFile=/etc/sentinel/cloudbreak-postgres.env
+WorkingDirectory=/var/lib/cloudbreak
+ExecStart=/opt/cloudbreak/target/release/cloudbreak --config /etc/cloudbreak/cloudbreak.query-tracker.toml query-tracker
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+CPUWeight=20
+IOWeight=20
+MemoryMax=512M
+TasksMax=64
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cloudbreak /var/log/cloudbreak
+
+[Install]
+WantedBy=multi-user.target

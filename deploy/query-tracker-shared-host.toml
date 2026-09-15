@@ -1,0 +1,28 @@
+[server]
+host = "127.0.0.1"
+port = 4004
+max-connections = 20
+
+[database]
+url = "__DATABASE_URL__"
+max-connections = 3
+min-connections = 1
+connect-timeout = "10s"
+acquire-timeout = "10s"
+sqlx-logging = false
+
+[query-tracker]
+create-database-indexes = true
+index-generation-threshold = 10
+index-creation-delay = "5m"
+priority-mode = "frequency"
+# Existing parent table has seven baseline indexes: allow one extra index pair.
+max-auto-indexes = 8
+included-programs = []
+excluded-programs = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]
+indexer-metrics = "127.0.0.1:4002"
+indexer-metrics-threshold = 0
+index-eviction-enabled = false
+mark-unhealthy-for-eviction = false
+explain-enabled = false
+discrepancy-enabled = false
