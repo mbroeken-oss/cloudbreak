@@ -14,7 +14,7 @@ use crate::query_tracker_client::QueryTrackerClient;
 use crate::slot_syncronizer::SlotSyncronizerData;
 use agave_feature_set::FeatureSet;
 use cloudbreak_core::{
-    AccountSelectorConfig, ProcessedCommitmentBehavior, UnhealthyResponseBehavior,
+    AccountSelectorConfig, MethodSection, ProcessedCommitmentBehavior, UnhealthyResponseBehavior,
 };
 use cloudbreak_entity::slots;
 use hyper::StatusCode;
@@ -114,6 +114,12 @@ pub struct CloudbreakRpcState {
     pub simulation_supported: bool,
     pub supply_cache: Option<SharedSupplyCache>,
     pub feature_set_cache: Arc<RwLock<Option<CachedFeatureSet>>>,
+    /// The `[largest-accounts]` API section; getLargestAccounts is served when
+    /// its `enabled` flag is set.
+    pub largest_accounts: MethodSection,
+    /// The `[token-largest-accounts]` API section; getTokenLargestAccounts is
+    /// served when its `enabled` flag is set.
+    pub token_largest_accounts: MethodSection,
 }
 
 impl CloudbreakRpcState {
@@ -137,6 +143,8 @@ impl CloudbreakRpcState {
         max_multiple_accounts: usize,
         simulation_supported: bool,
         supply_cache: Option<SharedSupplyCache>,
+        largest_accounts: MethodSection,
+        token_largest_accounts: MethodSection,
     ) -> Self {
         Self {
             database,
@@ -158,6 +166,8 @@ impl CloudbreakRpcState {
             simulation_supported,
             supply_cache,
             feature_set_cache: Arc::new(RwLock::new(None)),
+            largest_accounts,
+            token_largest_accounts,
         }
     }
 
@@ -293,6 +303,22 @@ fn extract_param<T: serde::de::DeserializeOwned>(
                 serde_json::from_value(v.clone()).map_err(|e| format!("Invalid parameter: {}", e))
             }),
         serde_json::Value::Null => Err(format!("Missing parameter at index {}", index)),
+        _ => Err("Parameters must be an array".to_string()),
+    }
+}
+
+fn extract_optional_param<T: serde::de::DeserializeOwned>(
+    params: &serde_json::Value,
+    index: usize,
+) -> Result<Option<T>, String> {
+    match params {
+        serde_json::Value::Array(arr) => match arr.get(index) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => serde_json::from_value(v.clone())
+                .map(Some)
+                .map_err(|e| format!("Invalid parameter: {}", e)),
+        },
+        serde_json::Value::Null => Ok(None),
         _ => Err("Parameters must be an array".to_string()),
     }
 }

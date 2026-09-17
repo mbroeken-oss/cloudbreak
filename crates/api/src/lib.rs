@@ -97,6 +97,17 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
     let simulation_supported = indexer_filter.supports_simulation();
     info!("simulateTransaction: supported: {}", simulation_supported);
 
+    let largest_accounts = config.largest_accounts.clone().unwrap_or_default();
+    let token_largest_accounts = config.token_largest_accounts.clone().unwrap_or_default();
+    info!(
+        "getLargestAccounts: supported: {}",
+        largest_accounts.enabled
+    );
+    info!(
+        "getTokenLargestAccounts: supported: {}",
+        token_largest_accounts.enabled
+    );
+
     let vote_accounts_supported = indexer_filter.supports_vote_accounts();
     let stakes_cache: vote_accounts_cache::SharedStakesSnapshot = Arc::new(RwLock::new(Arc::new(
         vote_accounts_cache::StakesSnapshot::empty(),
@@ -149,6 +160,8 @@ pub async fn run(config: &str) -> cloudbreak_core::Result<()> {
         max_multiple_accounts,
         simulation_supported,
         supply_cache,
+        largest_accounts,
+        token_largest_accounts,
     );
 
     info!("Server is starting...");

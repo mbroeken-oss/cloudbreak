@@ -435,6 +435,69 @@ pub struct IndexConfig {
     #[serde(default)]
     #[serde(rename = "accounts-owner-map-enabled")]
     pub accounts_owner_map_enabled: bool,
+    /// The indexer maintains the `getLargestAccounts` sentinel tops when this
+    /// section is present with `enabled = true`.
+    #[serde(rename = "largest-accounts")]
+    pub largest_accounts: Option<LargestAccountsConfig>,
+    /// The indexer maintains per-mint `getTokenLargestAccounts` tops when this
+    /// section is present with `enabled = true`.
+    #[serde(rename = "token-largest-accounts")]
+    pub token_largest_accounts: Option<TokenLargestAccountsConfig>,
+}
+
+/// `[largest-accounts]` (getLargestAccounts): enables the
+/// SOL/circulating/non-circulating sentinel tops.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct LargestAccountsConfig {
+    /// Master switch; the section is inert unless `enabled = true`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// In-memory holders kept per sentinel top; only the top 20 are persisted,
+    /// the surplus absorbs evictions.
+    #[serde(
+        rename = "accounts-per-mint",
+        default = "default_largest_accounts_per_mint"
+    )]
+    pub accounts_per_mint: usize,
+    #[serde(
+        rename = "prune-interval-slots",
+        default = "default_largest_prune_interval_slots"
+    )]
+    pub prune_interval_slots: u64,
+}
+
+/// `[token-largest-accounts]` (getTokenLargestAccounts): enables a per-mint
+/// top for each mint in `tracked-mints`.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TokenLargestAccountsConfig {
+    /// Master switch; the section is inert unless `enabled = true`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Mint addresses to track.
+    #[serde(rename = "tracked-mints", default)]
+    pub tracked_mints: Vec<PubkeyDef>,
+    /// In-memory holders kept per mint; only the top 20 are persisted, the
+    /// surplus absorbs evictions.
+    #[serde(
+        rename = "accounts-per-mint",
+        default = "default_largest_accounts_per_mint"
+    )]
+    pub accounts_per_mint: usize,
+    #[serde(
+        rename = "prune-interval-slots",
+        default = "default_largest_prune_interval_slots"
+    )]
+    pub prune_interval_slots: u64,
+}
+
+const fn default_largest_accounts_per_mint() -> usize {
+    100
+}
+
+const fn default_largest_prune_interval_slots() -> u64 {
+    20
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -463,6 +526,24 @@ impl IndexConfig {
 
     fn default_finalize_slot_buffer_size() -> usize {
         1000
+    }
+
+    /// Smallest configured prune interval among the enabled largest-accounts
+    /// sections; `None` when neither section is enabled.
+    pub fn largest_accounts_prune_interval_slots(&self) -> Option<u64> {
+        [
+            self.largest_accounts
+                .as_ref()
+                .filter(|config| config.enabled)
+                .map(|config| config.prune_interval_slots),
+            self.token_largest_accounts
+                .as_ref()
+                .filter(|config| config.enabled)
+                .map(|config| config.prune_interval_slots),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 }
 
@@ -658,6 +739,16 @@ pub struct ApiConfig {
     /// Omitted by default so no refresh traffic is started.
     #[serde(rename = "supply-cache", default)]
     pub supply_cache: Option<SupplyCacheConfig>,
+    /// The API serves `getLargestAccounts` when this section is present with
+    /// `enabled = true`. Must match the indexer's `[largest-accounts]` state
+    /// (the nodes are co-deployed).
+    #[serde(rename = "largest-accounts", default)]
+    pub largest_accounts: Option<MethodSection>,
+    /// The API serves `getTokenLargestAccounts` when this section is present
+    /// with `enabled = true`. Must match the indexer's
+    /// `[token-largest-accounts]` state.
+    #[serde(rename = "token-largest-accounts", default)]
+    pub token_largest_accounts: Option<MethodSection>,
 }
 
 impl ApiConfig {
@@ -702,6 +793,15 @@ impl SupplyCacheConfig {
     const fn default_max_staleness_ms() -> u64 {
         300_000
     }
+}
+
+/// Config section for an optional API method; the method is served only when
+/// the section is present with `enabled = true`.
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MethodSection {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Config for the `cache` optional module for the API.

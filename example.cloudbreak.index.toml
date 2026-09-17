@@ -63,6 +63,37 @@ port = 8875
 [programs]
 include = ["Stake11111111111111111111111111111111111111"]
 
+# getLargestAccounts (GLA) and getTokenLargestAccounts (GTLA) are enabled
+# independently. Each is on only when its section is present with enabled = true,
+# and the co-deployed API config must carry the same enabled sections. Both are
+# commented out below because this example filters [programs] to Stake, which
+# neither supports. Uncomment a section and meet its prerequisites to enable.
+
+# GLA: the native-SOL top plus the circulating and non-circulating class tops
+# (the filter param). Prerequisites: [programs] unfiltered (include = []) and
+# the [snapshot] section.
+# [largest-accounts]
+# enabled = true
+# accounts-per-mint = 100      # in-memory holders per top, of which the top 20 are persisted and served
+# prune-interval-slots = 20    # prune stale rows every N finalized slots, off the finalize critical path
+
+# GTLA: one persisted top per mint in tracked-mints. Prerequisites: the token
+# programs (Tokenkeg / Token-2022) indexed, meaning [programs] unfiltered or an
+# include-list containing both, and the [snapshot] section. Does not need the
+# owner map or the non-circulating tracker.
+# [token-largest-accounts]
+# enabled = true
+# accounts-per-mint = 100
+# prune-interval-slots = 20
+# tracked-mints = [
+#     "kinXdEcpDQeHPEuQnqmUgtYykqKGVFq6CeVX5iAHJq6",  # KIN
+#     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+#     "So11111111111111111111111111111111111111112",  # wSOL
+#     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
+#     "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN",  # TRUMP
+#     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+# ]
+
 # When set, the indexer runs in consistency-check mode: it indexes until the
 # limit is reached, compares its computed LtHash against the snapshot's, and
 # exits 0 on match / 1 on mismatch. Provide either time-limit or slot-limit.

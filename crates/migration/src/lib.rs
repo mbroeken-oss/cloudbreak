@@ -21,6 +21,7 @@ mod m20260528_000000_create_epoch_stakes_table;
 mod m20260703_000000_create_recent_blockhashes_table;
 mod m20260709_000000_add_block_height_to_recent_blockhashes;
 mod m20260711_000000_create_index_patterns_table;
+mod m20260808_000000_largest_accounts_record;
 mod m20260828_000000_repair_legacy_schema_upgrade;
 mod m20260828_000001_create_supply_snapshots_table;
 mod m20260828_000002_create_stake_projection_tables;
@@ -48,6 +49,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260703_000000_create_recent_blockhashes_table::Migration),
             Box::new(m20260709_000000_add_block_height_to_recent_blockhashes::Migration),
             Box::new(m20260711_000000_create_index_patterns_table::Migration),
+            Box::new(m20260808_000000_largest_accounts_record::Migration),
             Box::new(m20260828_000000_repair_legacy_schema_upgrade::Migration),
             Box::new(m20260828_000001_create_supply_snapshots_table::Migration),
             Box::new(m20260828_000002_create_stake_projection_tables::Migration),
